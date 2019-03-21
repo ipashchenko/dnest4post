@@ -11,9 +11,9 @@ def plot_corner(samples, savefn=None):
     columns = [item for sublist in columns for item in sublist]
     df = pd.DataFrame(samples, columns=columns)
     q = sns.PairGrid(df)
-    q.map_diag(sns.distplot, bins=100)
-    q.map_upper(plt.scatter, s=0.5)
-    q.map_lower(sns.kdeplot, linewidths=0.25)
+    q.map_diag(sns.distplot, bins=50)
+    q.map_upper(plt.scatter, s=1.0)
+    q.map_lower(sns.kdeplot, linewidths=0.5)
     if savefn is not None:
         q.fig.savefig(savefn, dpi=300, bbox_inches="tight")
     return q.fig
