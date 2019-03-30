@@ -41,6 +41,7 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
     axes.set_xlabel("RA, mas")
     axes.set_ylabel("DEC, mas")
     axes.invert_xaxis()
+    axes.set_aspect("equal")
 
     if savefn is not None:
         fig.savefig(savefn, dpi=300, bbox_inches="tight")
