@@ -14,7 +14,8 @@ def get_samples_for_each_n(samples, jitter_first=True, n_max=30):
         samples_with_n_components = list()
         for sample in samples[n_components == n]:
             one_post_point = list()
-            one_post_point.append(sample[0])
+            if jitter_first:
+                one_post_point.append(sample[0])
             for k in range(n):
                 one_post_point.extend([sample[j+k+i*n_max] for i in range(4)])
             samples_with_n_components.append(one_post_point)
@@ -25,14 +26,14 @@ def get_samples_for_each_n(samples, jitter_first=True, n_max=30):
 if __name__ == "__main__":
     n_true = 6
 
-    truths = [0, 0, np.log(2), np.log(0.1),
-              -0.5, 0, np.log(1), np.log(0.2),
-              -1.5, -1, np.log(0.5), np.log(0.3),
-              -3.5, -2, np.log(0.25), np.log(0.5),
-              -5, -5, np.log(0.125), np.log(0.5),
-              -7.5, -8, np.log(0.075), np.log(0.5),
-              -8, -9, np.log(0.05), np.log(0.75),
-              -9, -9.5, np.log(0.035), np.log(0.75)]
+    # truths = [0, 0, np.log(2), np.log(0.1),
+    #           -0.5, 0, np.log(1), np.log(0.2),
+    #           -1.5, -1, np.log(0.5), np.log(0.3),
+    #           -3.5, -2, np.log(0.25), np.log(0.5),
+    #           -5, -5, np.log(0.125), np.log(0.5),
+    #           -7.5, -8, np.log(0.075), np.log(0.5),
+    #           -8, -9, np.log(0.05), np.log(0.75),
+    #           -9, -9.5, np.log(0.035), np.log(0.75)]
 
     post_fn = "/home/ilya/github/dnest4post/data/posterior_sample.txt"
     from plotting import rj_plot_ncomponents_distribution
@@ -45,7 +46,9 @@ if __name__ == "__main__":
 
     result = get_samples_for_each_n(samples)
     samples_n = result[n_pmax]
-    from postprocess_labels_gains import sort_samples_by_F, sort_samples_by_r
-    samples_n = sort_samples_by_r(samples_n, n_pmax)
-    from plotting import plot_corner
-    fig = plot_corner(samples_n[:, 1:], "corner_{}_smallest_myhp_100x100.png".format(n_pmax))
+    np.savetxt("posterior_nbest_{}_1800_S_long.txt".format(n_pmax), samples_n)
+
+    # from postprocess_labels_gains import sort_samples_by_r
+    # samples_n = sort_samples_by_r(samples_n, n_pmax)
+    # from plotting import plot_corner
+    # fig = plot_corner(samples_n[:, 1:], "corner_{}_1800_S_r_larger_field.png".format(n_pmax))
