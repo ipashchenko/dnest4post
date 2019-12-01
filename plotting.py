@@ -1,14 +1,44 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from astropy import units as u
 from matplotlib.patches import Ellipse, Circle
 import sys
 sys.path.insert(0, '/home/ilya/github/ve/vlbi_errors')
 from spydiff import import_difmap_model
 # import seaborn as sns
 import corner
-from postprocess_labels import sort_samples_by_r
+from postprocess_labels import sort_samples_by_r, sort_samples_by_F
 from postprocess_labels_rj import get_samples_for_each_n
+
+mas_to_rad = u.mas.to(u.rad)
+
+
+def gaussian_circ_ft(flux, dx, dy, bmaj, uv):
+    """
+    FT of circular gaussian at ``uv`` points.
+
+    :param flux:
+        Full flux of gaussian.
+    :param dx:
+        Distance from phase center [mas].
+    :param dy:
+        Distance from phase center [mas].
+    :param bmaj:
+        FWHM of a gaussian [mas].
+    :param uv:
+        2D numpy array of (u,v)-coordinates (dimensionless).
+    :return:
+        Tuple of real and imaginary visibilities parts.
+    """
+    shift = [dx*mas_to_rad, dy*mas_to_rad]
+    result = np.exp(-2.0*np.pi*1j*(uv @ shift))
+    c = (np.pi*bmaj*mas_to_rad)**2/(4. * np.log(2.))
+    b = uv[:, 0]**2 + uv[:, 1]**2
+    ft = flux*np.exp(-c*b)
+    ft = np.array(ft, dtype=complex)
+    result *= ft
+    return result.real, result.imag
 
 
 def process_rj_samples(post_file, n_comp, n_max, jitter_first=True, savefn=None,
@@ -21,15 +51,20 @@ def process_rj_samples(post_file, n_comp, n_max, jitter_first=True, savefn=None,
     return fig
 
 
+# TODO: Plot lgsize vs logflux for components too
 def process_norj_samples(post_file, jitter_first=True, savefn=None,
                          ra_lim=(-10, 10), dec_lim=(-10, 10),
-                         difmap_model_fn=None):
+                         difmap_model_fn=None, sort_by_r=True):
     data = np.loadtxt(post_file)
     if jitter_first:
         data = data[:, 1:]
-    data = sort_samples_by_r(data)
-    fig = plot_position_posterior(data, savefn, ra_lim, dec_lim, difmap_model_fn)
-    return fig
+    if sort_by_r:
+        data = sort_samples_by_r(data)
+    else:
+        data = sort_samples_by_F(data)
+    fig1 = plot_position_posterior(data, savefn, ra_lim, dec_lim, difmap_model_fn)
+    fig2 = plot_flux_size_posterior(data)
+    return fig1, fig2
 
 
 def plot_corner(samples, savefn=None, truths=None):
@@ -70,16 +105,16 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
         fluxes[i_comp] = samples[:, 2+i_comp*4]
 
     for i_comp, color in zip(range(n_comps), colors):
-        axes.scatter(xs[i_comp], ys[i_comp], s=3.0, color=color)
+        axes.scatter(xs[i_comp], ys[i_comp], s=0.1, color=color)
 
     if difmap_model_fn is not None:
         comps = import_difmap_model(difmap_model_fn)
         print("Read {} components from {}".format(len(comps), difmap_model_fn))
         for comp in comps:
             if comp.size == 3:
-                axes.scatter(comp.p[2], comp.p[1], s=40, color="black", alpha=0.5, marker="x")
+                axes.scatter(-comp.p[1], -comp.p[2], s=80, color="black", alpha=1, marker="x")
             elif comp.size == 4:
-                e = Circle((comp.p[2], comp.p[1]), comp.p[3],
+                e = Circle((-comp.p[1], -comp.p[2]), comp.p[3],
                            edgecolor="black", facecolor="red",
                            alpha=0.125)
                 axes.add_patch(e)
@@ -95,6 +130,100 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
 
     if savefn is not None:
         fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+# TODO: plot iso-Tb curves and resolution limit curves
+def plot_flux_size_posterior(samples, savefn=None):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    log_fluxes = dict()
+    log_sizes = dict()
+    n_comps = int(len(samples[0])/4)
+
+    for i_comp in range(n_comps):
+        log_fluxes[i_comp] = samples[:, 2+i_comp*4]
+        log_sizes[i_comp] = samples[:, 3+i_comp*4]
+
+    for i_comp, color in zip(range(n_comps), colors):
+        axes.scatter(np.log10(np.e)*log_fluxes[i_comp], np.log10(np.e)*log_sizes[i_comp], s=0.1, color=color)
+
+    axes.set_xlabel("lg(flux [Jy])")
+    axes.set_ylabel("lg(size [mas])")
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def plot_radplot(data_file, samples=None, samples_file=None, style="a&p",
+                 savefn=None, n_samples=12, comp_length=4, jitter_first=True,
+                 sort_by_r=True):
+
+    if samples is None:
+        if samples_file is None:
+            raise Exception("Need samples or samples_file!")
+        samples = np.loadtxt(samples_file)
+    if jitter_first:
+        samples = samples[:, 1:]
+    if sort_by_r:
+        samples = sort_samples_by_r(samples, comp_length)
+    else:
+        samples = sort_samples_by_F(samples, comp_length)
+
+    # Plot data
+    u, v, re, im, err = np.loadtxt(data_file, unpack=True)
+    uv = np.column_stack((u, v))
+    uv_radius = np.hypot(u, v)
+    if style == "a&p":
+        a1 = np.hypot(re, im)
+        a2 = np.arctan2(re, im)
+    if style == "re&im":
+        a1 = re
+        a2 = im
+
+    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, sharey=False)
+    axes[0].plot(uv_radius, a1, '_', color="#1f77b4", alpha=0.75, ms=5, mew=1)
+    axes[1].plot(uv_radius, a2, '_', color="#1f77b4", alpha=0.75, ms=5, mew=1)
+
+    length = len(samples[0])
+    indx = np.random.randint(0, len(samples), n_samples)
+    for i in indx:
+        sample = samples[i]
+
+        n_gaussians = int(length / comp_length)
+        re_model = np.zeros(len(re))
+        im_model = np.zeros(len(im))
+
+        for n in range(n_gaussians):
+            x = sample[n * comp_length + 0]
+            y = sample[n * comp_length + 1]
+            flux = np.exp(sample[n * comp_length + 2])
+            size = np.exp(sample[n * comp_length + 3])
+            re_model_, im_model_ = gaussian_circ_ft(flux, x, y, size, uv)
+            re_model += re_model_
+            im_model += im_model_
+
+        if style == "a&p":
+            a1 = np.hypot(re_model, im_model)
+            a2 = np.arctan2(re_model, im_model)
+        if style == "re&im":
+            a1 = re_model
+            a2 = im_model
+        axes[0].plot(uv_radius, a1, '_', color="#ff7f0e", alpha=0.1, ms=5, mew=1)
+        axes[1].plot(uv_radius, a2, '_', color="#ff7f0e", alpha=0.1, ms=5, mew=1)
+
+    if style == 'a&p':
+        axes[0].set_ylabel('Amplitude, [Jy]')
+        axes[1].set_ylabel('Phase, [rad]')
+    elif style == 're&im':
+        axes[0].set_ylabel('Re, [Jy]')
+        axes[1].set_ylabel('Im, [Jy]')
+    axes[1].set_xlim(left=0)
+    axes[1].set_xlabel('UV-radius, wavelengths')
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=100, bbox_inches="tight")
     return fig
 
 
