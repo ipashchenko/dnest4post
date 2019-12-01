@@ -51,10 +51,11 @@ def process_rj_samples(post_file, n_comp, n_max, jitter_first=True, savefn=None,
     return fig
 
 
-# TODO: Plot lgsize vs logflux for components too
-def process_norj_samples(post_file, jitter_first=True, savefn=None,
+def process_norj_samples(post_file, jitter_first=True,
                          ra_lim=(-10, 10), dec_lim=(-10, 10),
-                         difmap_model_fn=None, sort_by_r=True):
+                         difmap_model_fn=None, data_file=None, sort_by_r=True,
+                         savefn_position_post=None, savefn_fluxsize_post=None,
+                         savefn_radplot_post=None):
     data = np.loadtxt(post_file)
     if jitter_first:
         data = data[:, 1:]
@@ -62,9 +63,14 @@ def process_norj_samples(post_file, jitter_first=True, savefn=None,
         data = sort_samples_by_r(data)
     else:
         data = sort_samples_by_F(data)
-    fig1 = plot_position_posterior(data, savefn, ra_lim, dec_lim, difmap_model_fn)
-    fig2 = plot_flux_size_posterior(data)
-    return fig1, fig2
+    fig1 = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
+    fig2 = plot_flux_size_posterior(data, savefn_fluxsize_post)
+    if data_file is not None:
+        fig3 = plot_radplot(data_file, data, savefn=savefn_radplot_post,
+                            jitter_first=jitter_first)
+    else:
+        fig3 = None
+    return fig1, fig2, fig3
 
 
 def plot_corner(samples, savefn=None, truths=None):
