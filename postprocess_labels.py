@@ -214,7 +214,20 @@ def cg_image(flux, size_pixels, center_pixel):
     return lambda x, y:  amplitude*np.exp(-4*np.log(2)*np.hypot(x-center_pixel[0], y-center_pixel[1])**2/size_pixels**2)
 
 
-def plot_posterior_image(samples, imsize, pixsize, size=10, comp_length=4):
+def plot_posterior_image(imsize, pixsize, samples=None, samples_file=None,
+                         size=10, comp_length=4, jitter_first=True,
+                         sort_by_r=True):
+    if samples is None:
+        if samples_file is None:
+            raise Exception("Need samples or samples_file!")
+        samples = np.loadtxt(samples_file)
+    if jitter_first:
+        samples = samples[:, 1:]
+    if sort_by_r:
+        samples = sort_samples_by_r(samples, comp_length)
+    else:
+        samples = sort_samples_by_F(samples, comp_length)
+
     length = len(samples[0])
     image = np.zeros(imsize)
     xx, yy = np.meshgrid(np.arange(imsize[0]), np.arange(imsize[1]))
