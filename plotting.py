@@ -70,8 +70,8 @@ def process_norj_samples(post_file, jitter_first=True,
     else:
         data = sort_samples_by_F(data)
     fig1 = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
-    fig2 = plot_flux_size_posterior(data, savefn_fluxsize_post)
-    fig3 = plot_tb_distance_posterior(data, freq_ghz, z, savefn_rtb_post)
+    fig2 = plot_flux_size_posterior(data, freq_ghz, z, savefn=savefn_fluxsize_post)
+    fig3 = plot_tb_distance_posterior(data, freq_ghz, z, savefn=savefn_rtb_post)
     if data_file is not None:
         fig4 = plot_radplot(data_file, data, savefn=savefn_radplot_post,
                             jitter_first=jitter_first)
@@ -147,7 +147,7 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
 
 
 # TODO: plot iso-Tb curves and resolution limit curves
-def plot_flux_size_posterior(samples, savefn=None):
+def plot_flux_size_posterior(samples, freq_ghz=15.4, z=0, D=1, savefn=None):
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     fig, axes = plt.subplots(1, 1)
     log_fluxes = dict()
@@ -157,6 +157,17 @@ def plot_flux_size_posterior(samples, savefn=None):
     for i_comp in range(n_comps):
         log_fluxes[i_comp] = samples[:, 2+i_comp*4]
         log_sizes[i_comp] = samples[:, 3+i_comp*4]
+
+    # Find range of fluxes to plot iso-Tb lines
+    lg_all_fluxes = np.log10(np.e)*np.concatenate(list(log_fluxes.values()))
+    x = np.linspace(np.min(lg_all_fluxes), np.max(lg_all_fluxes), 100)
+    for lg_tb in (9, 10.5, 12, 13):
+        y = lg_size_for_given_flux_and_tb(10**x, lg_tb, freq_ghz, z, D)
+        axes.plot(x, y, color='black', linestyle='--', label=r"$10^{%s}$ K" % (str(lg_tb)))
+
+    from labellines import labelLines
+    lines = axes.get_lines()
+    labelLines(lines, xvals=[x[int(len(x)/10)]]*len(lines))
 
     for i_comp, color in zip(range(n_comps), colors):
         axes.scatter(np.log10(np.e)*log_fluxes[i_comp], np.log10(np.e)*log_sizes[i_comp], s=0.6, color=color)
@@ -184,6 +195,14 @@ def tb_comp(flux, bmaj, freq, z=0, bmin=None, D=1):
     freq *= 10**9
     flux *= 10**(-23)
     return 2.*np.log(2)*(1.+z)*flux*c**2/(freq**2*np.pi*k*bmaj*bmin*D)
+
+
+def lg_size_for_given_flux_and_tb(flux_jy, lg_tb, freq_ghz=15.4, z=0.0, D=1.0):
+    freq = freq_ghz * 10**9
+    flux = flux_jy * 10**(-23)
+    lg_bmaj = 0.5*(np.log10(2.*np.log(2)*(1.+z)*c**2/(np.pi*k*freq**2*D))
+                   + np.log10(flux) - lg_tb)
+    return lg_bmaj - np.log10(mas_to_rad)
 
 
 def plot_tb_distance_posterior(samples, freq_ghz, z=0.0, savefn=None):
