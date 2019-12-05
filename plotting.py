@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from astropy import units as u
+from astropy import constants as const
 from matplotlib.patches import Ellipse, Circle
 import sys
 sys.path.insert(0, '/home/ilya/github/ve/vlbi_errors')
@@ -12,6 +13,9 @@ from postprocess_labels import sort_samples_by_r, sort_samples_by_F
 from postprocess_labels_rj import get_samples_for_each_n
 
 mas_to_rad = u.mas.to(u.rad)
+# Speed of light [cm / s]
+c = const.c.cgs.value
+k = const.k_B.cgs.value
 
 
 def gaussian_circ_ft(flux, dx, dy, bmaj, uv):
@@ -52,9 +56,11 @@ def process_rj_samples(post_file, n_comp, n_max, jitter_first=True, savefn=None,
 
 
 def process_norj_samples(post_file, jitter_first=True,
-                         ra_lim=(-10, 10), dec_lim=(-10, 10),
+                         ra_lim=(-10, 10), dec_lim=(-10, 10), freq_ghz=15.4,
+                         z=0.0,
                          difmap_model_fn=None, data_file=None, sort_by_r=True,
                          savefn_position_post=None, savefn_fluxsize_post=None,
+                         savefn_rtb_post=None,
                          savefn_radplot_post=None):
     data = np.loadtxt(post_file)
     if jitter_first:
@@ -65,12 +71,13 @@ def process_norj_samples(post_file, jitter_first=True,
         data = sort_samples_by_F(data)
     fig1 = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
     fig2 = plot_flux_size_posterior(data, savefn_fluxsize_post)
+    fig3 = plot_tb_distance_posterior(data, freq_ghz, z, savefn_rtb_post)
     if data_file is not None:
-        fig3 = plot_radplot(data_file, data, savefn=savefn_radplot_post,
+        fig4 = plot_radplot(data_file, data, savefn=savefn_radplot_post,
                             jitter_first=jitter_first)
     else:
-        fig3 = None
-    return fig1, fig2, fig3
+        fig4 = None
+    return fig1, fig2, fig3, fig4
 
 
 def plot_corner(samples, savefn=None, truths=None):
@@ -111,7 +118,7 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
         fluxes[i_comp] = samples[:, 2+i_comp*4]
 
     for i_comp, color in zip(range(n_comps), colors):
-        axes.scatter(xs[i_comp], ys[i_comp], s=0.1, color=color)
+        axes.scatter(xs[i_comp], ys[i_comp], s=0.6, color=color)
 
     if difmap_model_fn is not None:
         comps = import_difmap_model(difmap_model_fn)
@@ -122,7 +129,7 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
             elif comp.size == 4:
                 e = Circle((-comp.p[1], -comp.p[2]), comp.p[3],
                            edgecolor="black", facecolor="red",
-                           alpha=0.125)
+                           alpha=0.05)
                 axes.add_patch(e)
             else:
                 raise Exception("Not implemented for elliptical component!")
@@ -152,10 +159,51 @@ def plot_flux_size_posterior(samples, savefn=None):
         log_sizes[i_comp] = samples[:, 3+i_comp*4]
 
     for i_comp, color in zip(range(n_comps), colors):
-        axes.scatter(np.log10(np.e)*log_fluxes[i_comp], np.log10(np.e)*log_sizes[i_comp], s=0.1, color=color)
+        axes.scatter(np.log10(np.e)*log_fluxes[i_comp], np.log10(np.e)*log_sizes[i_comp], s=0.6, color=color)
 
     axes.set_xlabel("lg(flux [Jy])")
     axes.set_ylabel("lg(size [mas])")
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def tb_comp(flux, bmaj, freq, z=0, bmin=None, D=1):
+    """
+    :param flux:
+        Flux in Jy.
+    :param freq:
+        Frequency in GHz.
+    """
+    bmaj *= mas_to_rad
+    if bmin is None:
+        bmin = bmaj
+    else:
+        bmin *= mas_to_rad
+    freq *= 10**9
+    flux *= 10**(-23)
+    return 2.*np.log(2)*(1.+z)*flux*c**2/(freq**2*np.pi*k*bmaj*bmin*D)
+
+
+def plot_tb_distance_posterior(samples, freq_ghz, z=0.0, savefn=None):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    lg_tbs = dict()
+    lg_rs = dict()
+    n_comps = int(len(samples[0])/4)
+
+    for i_comp in range(n_comps):
+        lg_rs[i_comp] = np.log10(np.hypot(samples[:, 0+i_comp*4], samples[:, 1+i_comp*4]))
+        lg_tbs[i_comp] = np.log10(tb_comp(np.exp(samples[:, 2+i_comp*4]),
+                                          np.exp(samples[:, 3+i_comp*4]),
+                                          freq_ghz, z=z))
+
+    for i_comp, color in zip(range(n_comps), colors):
+        axes.scatter(lg_rs[i_comp], lg_tbs[i_comp], s=0.6, color=color)
+
+    axes.set_xlabel("lg(r [mas])")
+    axes.set_ylabel("lg(Tb [K])")
 
     if savefn is not None:
         fig.savefig(savefn, dpi=300, bbox_inches="tight")
