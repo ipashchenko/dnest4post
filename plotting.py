@@ -59,8 +59,10 @@ def process_norj_samples(post_file, jitter_first=True,
                          ra_lim=(-10, 10), dec_lim=(-10, 10), freq_ghz=15.4,
                          z=0.0,
                          difmap_model_fn=None, data_file=None, sort_by_r=True,
-                         savefn_position_post=None, savefn_fluxsize_post=None,
-                         savefn_rtb_post=None,
+                         savefn_position_post=None,
+                         savefn_fluxsize_isot_post=None,
+                         savefn_fluxsize_post=None,
+                         savefn_rtb_post=None, savefn_sizer_post=None,
                          savefn_radplot_post=None):
     data = np.loadtxt(post_file)
     if jitter_first:
@@ -70,14 +72,16 @@ def process_norj_samples(post_file, jitter_first=True,
     else:
         data = sort_samples_by_F(data)
     fig1 = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
-    fig2 = plot_flux_size_posterior(data, freq_ghz, z, savefn=savefn_fluxsize_post)
-    fig3 = plot_tb_distance_posterior(data, freq_ghz, z, savefn=savefn_rtb_post)
+    fig2 = plot_flux_size_posterior_isoT(data, freq_ghz, z, savefn=savefn_fluxsize_isot_post)
+    fig3 = plot_flux_size_posterior(data, savefn=savefn_fluxsize_post)
+    fig4 = plot_tb_distance_posterior(data, freq_ghz, z, savefn=savefn_rtb_post)
+    fig5 = plot_size_distance_posterior(data, savefn=savefn_sizer_post)
     if data_file is not None:
-        fig4 = plot_radplot(data_file, data, savefn=savefn_radplot_post,
+        fig6 = plot_radplot(data_file, data, savefn=savefn_radplot_post,
                             jitter_first=jitter_first)
     else:
-        fig4 = None
-    return fig1, fig2, fig3, fig4
+        fig6 = None
+    return fig1, fig2, fig3, fig4, fig5, fig6
 
 
 def plot_corner(samples, savefn=None, truths=None):
@@ -146,8 +150,7 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
     return fig
 
 
-# TODO: plot iso-Tb curves and resolution limit curves
-def plot_flux_size_posterior(samples, freq_ghz=15.4, z=0, D=1, savefn=None):
+def plot_flux_size_posterior_isoT(samples, freq_ghz=15.4, z=0, D=1, savefn=None):
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     fig, axes = plt.subplots(1, 1)
     log_fluxes = dict()
@@ -160,7 +163,7 @@ def plot_flux_size_posterior(samples, freq_ghz=15.4, z=0, D=1, savefn=None):
 
     # Find range of fluxes to plot iso-Tb lines
     lg_all_fluxes = np.log10(np.e)*np.concatenate(list(log_fluxes.values()))
-    x = np.linspace(np.min(lg_all_fluxes), np.max(lg_all_fluxes), 100)
+    x = np.linspace(np.min(lg_all_fluxes)-0.1*np.ptp(lg_all_fluxes), np.max(lg_all_fluxes), 100)
     for lg_tb in (9, 10.5, 12, 13):
         y = lg_size_for_given_flux_and_tb(10**x, lg_tb, freq_ghz, z, D)
         axes.plot(x, y, color='black', linestyle='--', label=r"$10^{%s}$ K" % (str(lg_tb)))
@@ -174,6 +177,30 @@ def plot_flux_size_posterior(samples, freq_ghz=15.4, z=0, D=1, savefn=None):
 
     axes.set_xlabel("lg(flux [Jy])")
     axes.set_ylabel("lg(size [mas])")
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def plot_flux_size_posterior(samples, savefn=None):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    fluxes = dict()
+    sizes = dict()
+    n_comps = int(len(samples[0])/4)
+
+    for i_comp in range(n_comps):
+        fluxes[i_comp] = np.exp(samples[:, 2+i_comp*4])
+        sizes[i_comp] = np.exp(samples[:, 3+i_comp*4])
+
+    for i_comp, color in zip(range(n_comps), colors):
+        axes.scatter(fluxes[i_comp], sizes[i_comp], s=0.6, color=color)
+
+    axes.set_xlabel("flux [Jy]")
+    axes.set_ylabel("FWHM [mas]")
+    axes.set_xscale('log')
+    axes.set_yscale('log')
 
     if savefn is not None:
         fig.savefig(savefn, dpi=300, bbox_inches="tight")
@@ -208,21 +235,51 @@ def lg_size_for_given_flux_and_tb(flux_jy, lg_tb, freq_ghz=15.4, z=0.0, D=1.0):
 def plot_tb_distance_posterior(samples, freq_ghz, z=0.0, savefn=None):
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     fig, axes = plt.subplots(1, 1)
-    lg_tbs = dict()
-    lg_rs = dict()
+    tbs = dict()
+    rs = dict()
     n_comps = int(len(samples[0])/4)
 
     for i_comp in range(n_comps):
-        lg_rs[i_comp] = np.log10(np.hypot(samples[:, 0+i_comp*4], samples[:, 1+i_comp*4]))
-        lg_tbs[i_comp] = np.log10(tb_comp(np.exp(samples[:, 2+i_comp*4]),
+        rs[i_comp] = np.hypot(samples[:, 0+i_comp*4], samples[:, 1+i_comp*4])
+        tbs[i_comp] = tb_comp(np.exp(samples[:, 2+i_comp*4]),
                                           np.exp(samples[:, 3+i_comp*4]),
-                                          freq_ghz, z=z))
+                                          freq_ghz, z=z)
 
     for i_comp, color in zip(range(n_comps), colors):
-        axes.scatter(lg_rs[i_comp], lg_tbs[i_comp], s=0.6, color=color)
+        axes.scatter(rs[i_comp], tbs[i_comp], s=0.6, color=color)
 
-    axes.set_xlabel("lg(r [mas])")
-    axes.set_ylabel("lg(Tb [K])")
+    # Need manually set ylim because of matplotlib bug
+    lg_tb_min = np.floor((np.log10(np.min([tbs[i] for i in range(n_comps)]))))
+    lg_tb_max = np.ceil(np.log10(np.max([tbs[i] for i in range(n_comps)])))
+    axes.set_ylim([10**lg_tb_min, 10**lg_tb_max])
+    axes.set_xlabel("r [mas]")
+    axes.set_ylabel("Tb [K]")
+    axes.set_xscale('log')
+    axes.set_yscale('log')
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def plot_size_distance_posterior(samples, savefn=None):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    sizes = dict()
+    rs = dict()
+    n_comps = int(len(samples[0])/4)
+
+    for i_comp in range(n_comps):
+        rs[i_comp] = np.hypot(samples[:, 0+i_comp*4], samples[:, 1+i_comp*4])
+        sizes[i_comp] = np.exp(samples[:, 3+i_comp*4])
+
+    for i_comp, color in zip(range(n_comps), colors):
+        axes.scatter(rs[i_comp], sizes[i_comp], s=0.6, color=color)
+
+    axes.set_xlabel("r [mas]")
+    axes.set_ylabel("FWHM [mas]")
+    axes.set_xscale('log')
+    axes.set_yscale('log')
 
     if savefn is not None:
         fig.savefig(savefn, dpi=300, bbox_inches="tight")
