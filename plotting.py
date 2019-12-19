@@ -4,12 +4,17 @@ import matplotlib.pyplot as plt
 from astropy import units as u
 from astropy import constants as const
 from matplotlib.patches import Ellipse, Circle
+from sklearn.covariance import MinCovDet
+from sklearn.mixture import GaussianMixture as GMM
+import datetime
 import sys
 sys.path.insert(0, '/home/ilya/github/ve/vlbi_errors')
 from spydiff import import_difmap_model
 # import seaborn as sns
 import corner
-from postprocess_labels import sort_samples_by_r, sort_samples_by_F
+from postprocess_labels import (sort_samples_by_r, sort_samples_by_F,
+                                find_component_xy_location_covariance,
+                                find_ellipse_angle)
 from postprocess_labels_rj import get_samples_for_each_n
 
 mas_to_rad = u.mas.to(u.rad)
@@ -55,6 +60,95 @@ def process_rj_samples(post_file, n_comp, n_max, jitter_first=True, savefn=None,
     return fig
 
 
+def plot_core_direction_several_epochs(post_files_dict, jitter_first=True, color=None, fig=None):
+    if color is None:
+        color = plt.rcParams['axes.prop_cycle'].by_key()['color'][0]
+    if fig is None:
+        fig, axes = plt.subplots(1, 1)
+    else:
+        axes = fig.get_axes()[0]
+    dates = list()
+    angles = list()
+    for i, (epoch, post_files) in enumerate(post_files_dict.items()):
+        print("Processing epoch {}".format(epoch))
+        for post_file in post_files:
+            samples = np.loadtxt(post_file)
+            if jitter_first:
+                samples = samples[:, 1:]
+
+            samples = sort_samples_by_F(samples)
+            xy = samples[:, 0:2] - np.median(samples[:, 0:2], axis=0)
+            try:
+                loc, cov = find_component_xy_location_covariance(xy)
+            except ValueError:
+                loc, cov = find_component_xy_location_covariance(xy, type="gmm")
+
+            v, w = np.linalg.eigh(cov[:2, :2])
+            v = np.sqrt(v)
+            print(v[0]/v[1])
+            if v[0]/v[1] > 0.5:
+                continue
+
+            angle = find_ellipse_angle(cov)
+            if angle > 90:
+                angle -= 180
+            elif angle < -90:
+                angle += 180
+            angles.append(angle)
+            dates.append(datetime.datetime.strptime(epoch, '%Y_%m_%d'))
+
+    angles = np.rad2deg(np.unwrap(np.deg2rad(angles)))
+    angles[angles < -60] += 180
+    axes.scatter(dates, angles, s=10, color=color)
+    # axes.set_ylim([0, 180])
+    axes.set_xlabel("Date")
+    axes.set_ylabel("Core angle - N-E, deg")
+    # axes.set_aspect("equal")
+
+    return fig
+
+
+def plot_several_epochs(post_files_dict, jitter_first=True, ra_lim=(-10, 10),
+                        dec_lim=(-10, 10)):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    for i, (epoch, post_file) in enumerate(post_files_dict.items()):
+        samples = np.loadtxt(post_file)
+        if jitter_first:
+            samples = samples[:, 1:]
+
+        samples = sort_samples_by_F(samples)
+
+        # Find position of most bright component and subtract its coordinates
+        # from all coordinates
+        x_core = np.median(samples[:, 0])
+        y_core = np.median(samples[:, 1])
+
+        xs = list()
+        ys = list()
+        n_comps = int(len(samples[0])/4)
+
+        for i_comp in range(n_comps):
+            xs.append(samples[:, 0+i_comp*4])
+            ys.append(samples[:, 1+i_comp*4])
+
+        xs = np.hstack(xs)
+        ys = np.hstack(ys)
+
+        axes.scatter(xs-x_core, ys-y_core, s=0.6, color=colors[i], alpha=0.5,
+                     label=epoch)
+
+    axes.set_xlim(ra_lim)
+    axes.set_ylim(dec_lim)
+    axes.set_xlabel("RA, mas")
+    axes.set_ylabel("DEC, mas")
+    axes.invert_xaxis()
+    axes.set_aspect("equal")
+    plt.legend(markerscale=5)
+
+    return fig
+
+
 def process_norj_samples(post_file, jitter_first=True,
                          ra_lim=(-10, 10), dec_lim=(-10, 10), freq_ghz=15.4,
                          z=0.0,
@@ -71,6 +165,8 @@ def process_norj_samples(post_file, jitter_first=True,
         data = sort_samples_by_r(data)
     else:
         data = sort_samples_by_F(data)
+    from postprocess_labels import cluster_by_flux_size
+    cluster_components = cluster_by_flux_size(data)
     fig1 = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
     fig2 = plot_flux_size_posterior_isoT(data, freq_ghz, z, savefn=savefn_fluxsize_isot_post)
     fig3 = plot_flux_size_posterior(data, savefn=savefn_fluxsize_post)
@@ -81,7 +177,8 @@ def process_norj_samples(post_file, jitter_first=True,
                             jitter_first=jitter_first)
     else:
         fig6 = None
-    return fig1, fig2, fig3, fig4, fig5, fig6
+    fig7 = plot_flux_size_posterior_clusters(cluster_components)
+    return fig1, fig2, fig3, fig4, fig5, fig6, fig7
 
 
 def plot_corner(samples, savefn=None, truths=None):
@@ -196,6 +293,23 @@ def plot_flux_size_posterior(samples, savefn=None):
 
     for i_comp, color in zip(range(n_comps), colors):
         axes.scatter(fluxes[i_comp], sizes[i_comp], s=0.6, color=color)
+
+    axes.set_xlabel("flux [Jy]")
+    axes.set_ylabel("FWHM [mas]")
+    axes.set_xscale('log')
+    axes.set_yscale('log')
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def plot_flux_size_posterior_clusters(cluster_components, savefn=None):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+
+    for cluster_id, components in cluster_components.items():
+        axes.scatter(np.exp(components[:, 2]), np.exp(components[:, 3]), s=0.6, color=colors[cluster_id])
 
     axes.set_xlabel("flux [Jy]")
     axes.set_ylabel("FWHM [mas]")
@@ -373,3 +487,208 @@ def rj_plot_ncomponents_distribution(posterior_file="posterior_sample.txt",
     if picture_fn is not None:
         plt.savefig(picture_fn, bbox_inches="tight")
     plt.show()
+
+
+if __name__ == "__main__":
+    import matplotlib
+
+    label_size = 16
+    matplotlib.rcParams['xtick.labelsize'] = label_size
+    matplotlib.rcParams['ytick.labelsize'] = label_size
+    matplotlib.rcParams['axes.titlesize'] = label_size
+    matplotlib.rcParams['axes.labelsize'] = label_size
+    matplotlib.rcParams['font.size'] = label_size
+    matplotlib.rcParams['legend.fontsize'] = label_size
+    matplotlib.rcParams['pdf.fonttype'] = 42
+    matplotlib.rcParams['ps.fonttype'] = 42
+    fig = plot_core_direction_several_epochs({"1997_08_18": ["1997_08_18.u.5comp_norj.txt", "1997_08_18.u.6comp_norj.txt", "1997_08_18.u.7comp_norj.txt", "1997_08_18.u.8comp_norj.txt"],
+                                              "2000_01_11": ["2000_01_11.u.6comp_norj.txt", "2000_01_11.u.7comp_norj.txt", "2000_01_11.u.8comp_norj.txt", "2000_01_11.u.9comp_norj.txt"],
+                                              "2002_08_12": ["2002_08_12.u.4comp_norj.txt", "2002_08_12.u.5comp_norj.txt", "2002_08_12.u.6comp_norj.txt", "2002_08_12.u.7comp_norj.txt", "2002_08_12.u.8comp_norj.txt"],
+                                              "2003_03_29": ["2003_03_29.u.6comp_norj.txt", "2003_03_29.u.7comp_norj.txt", "2003_03_29.u.8comp_norj.txt"],
+                                              "2004_10_18": ["2004_10_18.u.6comp_norj.txt", "2004_10_18.u.7comp_norj.txt", "2004_10_18.u.8comp_norj.txt"],
+                                              "2005_05_13": ["2005_05_13.u.6comp_norj.txt", "2005_05_13.u.7comp_norj.txt", "2005_05_13.u.8comp_norj.txt", "2005_05_13.u.9comp_norj.txt"],
+                                              "2005_09_23": ["2005_09_23.u.6comp_norj.txt", "2005_09_23.u.7comp_norj.txt", "2005_09_23.u.8comp_norj.txt" ],
+                                              "2005_10_29": ["2005_10_29.u.6comp_norj.txt", "2005_10_29.u.7comp_norj.txt", "2005_10_29.u.8comp_norj.txt"],
+                                              "2005_11_17": ["2005_11_17.u.6comp_norj.txt", "2005_11_17.u.7comp_norj.txt", "2005_11_17.u.8comp_norj.txt"],
+                                              "2006_07_07": ["2006_07_07.u.6comp_norj.txt", "2006_07_07.u.7comp_norj.txt", "2006_07_07.u.8comp_norj.txt"],
+                                              "2007_08_16": ["2007_08_16.u.6comp_norj.txt", "2007_08_16.u.7comp_norj.txt", "2007_08_16.u.8comp_norj.txt", "2007_08_16.u.9comp_norj.txt"],
+                                              "2008_06_25": ["2008_06_25.u.6comp_norj.txt", "2008_06_25.u.7comp_norj.txt", "2008_06_25.u.8comp_norj.txt"],
+                                              "2008_08_06": ["2008_08_06.u.6comp_norj.txt", "2008_08_06.u.7comp_norj.txt", "2008_08_06.u.8comp_norj.txt"],
+                                              "2008_11_19": ["2008_11_19.u.6comp_norj.txt", "2008_11_19.u.7comp_norj.txt", "2008_11_19.u.8comp_norj.txt", "2008_11_19.u.9comp_norj.txt"],
+                                              "2009_03_25": ["2009_03_25.u.6comp_norj.txt", "2009_03_25.u.7comp_norj.txt", "2009_03_25.u.8comp_norj.txt", "2009_03_25.u.9comp_norj.txt"],
+                                              "2009_12_10": ["2009_12_10.u.6comp_norj.txt", "2009_12_10.u.7comp_norj.txt", "2009_12_10.u.8comp_norj.txt"],
+                                              "2010_06_19": ["2010_06_19.u.7comp_norj.txt", "2010_06_19.u.8comp_norj.txt", "2010_06_19.u.9comp_norj.txt"],
+                                              "2010_06_27": ["2010_06_27.u.7comp_norj.txt", "2010_06_27.u.8comp_norj.txt"],
+                                              "2010_08_27": ["2010_08_27.u.5comp_norj.txt", "2010_08_27.u.6comp_norj.txt", "2010_08_27.u.7comp_norj.txt", "2010_08_27.u.8comp_norj.txt"],
+                                              "2010_11_13": ["2010_11_13.u.7comp_norj.txt", "2010_11_13.u.8comp_norj.txt", "2010_11_13.u.9comp_norj.txt"],
+                                              "2011_02_27": ["2011_02_27.u.6comp_norj.txt", "2011_02_27.u.7comp_norj.txt"],
+                                              "2011_08_15": ["2011_08_15.u.5comp_norj.txt", "2011_08_15.u.6comp_norj.txt", "2011_08_15.u.7comp_norj.txt"],
+                                              "2019_08_23": ["2019_08_23.u.5comp_norj.txt", "2019_08_23.u.6comp_norj.txt", "2019_08_23.u.7comp_norj.txt", "2019_08_23.u.8comp_norj.txt"],
+                                              "2019_08_27": ["2019_08_27.u.3comp_norj.txt", "2019_08_27.u.4comp_norj.txt", "2019_08_27.u.5comp_norj.txt", "2019_08_27.u.6comp_norj.txt", "2019_08_27.u.7comp_norj.txt", "2019_08_27.u.8comp_norj.txt"],
+                                              "2019_10_11": ["2019_10_11.u.4comp_norj.txt", "2019_10_11.u.5comp_norj.txt", "2019_10_11.u.6comp_norj.txt", "2019_10_11.u.7comp_norj.txt"]})
+
+    fig = plot_core_direction_several_epochs({"1997_08_18": ["1997_08_18.u.5comp_norj.txt"],
+                                              "2000_01_11": ["2000_01_11.u.6comp_norj.txt"],
+                                              "2002_08_12": ["2002_08_12.u.4comp_norj.txt"],
+                                              "2003_03_29": ["2003_03_29.u.6comp_norj.txt"],
+                                              "2004_10_18": ["2004_10_18.u.6comp_norj.txt"],
+                                              "2005_05_13": ["2005_05_13.u.6comp_norj.txt"],
+                                              "2005_09_23": ["2005_09_23.u.6comp_norj.txt"],
+                                              "2005_10_29": ["2005_10_29.u.6comp_norj.txt"],
+                                              "2005_11_17": ["2005_11_17.u.6comp_norj.txt"],
+                                              "2006_07_07": ["2006_07_07.u.6comp_norj.txt"],
+                                              "2007_08_16": ["2007_08_16.u.6comp_norj.txt"],
+                                              "2008_06_25": ["2008_06_25.u.6comp_norj.txt"],
+                                              "2008_08_06": ["2008_08_06.u.6comp_norj.txt"],
+                                              "2008_11_19": ["2008_11_19.u.6comp_norj.txt"],
+                                              "2009_03_25": ["2009_03_25.u.6comp_norj.txt"],
+                                              "2009_12_10": ["2009_12_10.u.6comp_norj.txt"],
+                                              "2010_06_19": ["2010_06_19.u.7comp_norj.txt"],
+                                              "2010_06_27": ["2010_06_27.u.7comp_norj.txt"],
+                                              "2010_08_27": ["2010_08_27.u.5comp_norj.txt"],
+                                              "2010_11_13": ["2010_11_13.u.7comp_norj.txt"],
+                                              "2011_02_27": ["2011_02_27.u.6comp_norj.txt"],
+                                              "2011_08_15": ["2011_08_15.u.5comp_norj.txt"],
+                                              "2019_08_23": ["2019_08_23.u.5comp_norj.txt"],
+                                              "2019_08_27": ["2019_08_27.u.3comp_norj.txt"],
+                                              "2019_10_11": ["2019_10_11.u.4comp_norj.txt"]
+                                              }, fig=fig, color="green")
+    fig = plot_core_direction_several_epochs({"1997_08_18": ["1997_08_18.u.8comp_norj.txt"],
+                                              "2000_01_11": ["2000_01_11.u.9comp_norj.txt"],
+                                              "2002_08_12": ["2002_08_12.u.8comp_norj.txt"],
+                                              "2003_03_29": ["2003_03_29.u.8comp_norj.txt"],
+                                              "2004_10_18": ["2004_10_18.u.8comp_norj.txt"],
+                                              "2005_05_13": ["2005_05_13.u.9comp_norj.txt"],
+                                              "2005_09_23": ["2005_09_23.u.8comp_norj.txt"],
+                                              "2005_10_29": ["2005_10_29.u.8comp_norj.txt"],
+                                              "2005_11_17": ["2005_11_17.u.8comp_norj.txt"],
+                                              "2006_07_07": ["2006_07_07.u.8comp_norj.txt"],
+                                              "2007_08_16": ["2007_08_16.u.9comp_norj.txt"],
+                                              "2008_06_25": ["2008_06_25.u.8comp_norj.txt"],
+                                              "2008_08_06": ["2008_08_06.u.8comp_norj.txt"],
+                                              "2008_11_19": ["2008_11_19.u.9comp_norj.txt"],
+                                              "2009_03_25": ["2009_03_25.u.9comp_norj.txt"],
+                                              "2009_12_10": ["2009_12_10.u.8comp_norj.txt"],
+                                              "2010_06_19": ["2010_06_19.u.9comp_norj.txt"],
+                                              "2010_06_27": ["2010_06_27.u.8comp_norj.txt"],
+                                              "2010_08_27": ["2010_08_27.u.8comp_norj.txt"],
+                                              "2010_11_13": ["2010_11_13.u.9comp_norj.txt"],
+                                              "2011_02_27": ["2011_02_27.u.7comp_norj.txt"],
+                                              "2011_08_15": ["2011_08_15.u.7comp_norj.txt"],
+                                              "2019_08_23": ["2019_08_23.u.8comp_norj.txt"],
+                                              "2019_08_27": ["2019_08_27.u.8comp_norj.txt"],
+                                              "2019_10_11": ["2019_10_11.u.7comp_norj.txt"]
+                                              }, fig=fig, color="red")
+    fig.savefig("core_direction_full_v1.png", bbox_inches="tight", dpi=300)
+
+    # post_files_dict = {#"2004_10_18": "2004_10_18.u.6comp_norj.txt",
+    #                                           "2005_05_13": "2005_05_13.u.7comp_norj.txt",
+    #                                           "2005_09_23": "2005_09_23.u.7comp_norj.txt",
+    #                                           "2005_10_29": "2005_10_29.u.7comp_norj.txt",
+    #                                           "2005_11_17": "2005_11_17.u.6comp_norj.txt",
+    #                                           "2006_07_07": "2006_07_07.u.8comp_norj.txt"}
+    #
+    # post_files_dict = {#"2008_06_25": "2008_06_25.u.7comp_norj.txt",
+    #                                           # "2008_08_06": "2008_08_06.u.8comp_norj.txt",
+    #                                           "2008_11_19": "2008_11_19.u.6comp_norj.txt",
+    #                                           "2009_03_25": "2009_03_25.u.8comp_norj.txt",
+    #                                           "2009_12_10": "2009_12_10.u.7comp_norj.txt"}
+    #                                           # "2010_06_19": "2010_06_19.u.9comp_norj.txt"}
+    #
+    # # This shows components going to center (gathering)
+    # post_files_dict = {"2019_08_27": "2019_08_27.u.6comp_norj.txt",
+    #                    "2019_10_11": "2019_10_11.u.6comp_norj.txt"}
+    #
+    # post_files_dict = {"2019_08_23": "2019_08_23.u.6comp_norj.txt",
+    #                    "2019_10_11": "2019_10_11.u.6comp_norj.txt"}
+    #
+    # #This shows components going from center
+    # post_files_dict = {"2019_08_23": "2019_08_23.u.6comp_norj.txt",
+    #                    "2019_08_27": "2019_08_27.u.6comp_norj.txt"}
+    #
+    # post_files_dict = {"2008_06_25": "2008_06_25.u.7comp_norj.txt",
+    #                    "2008_08_06": "2008_08_06.u.8comp_norj.txt",
+    #                    "2008_11_19": "2008_11_19.u.7comp_norj.txt"}
+    #                    # "2009_03_25": "2009_03_25.u.8comp_norj.txt",
+    #                    # "2009_12_10": "2009_12_10.u.7comp_norj.txt",
+    #                    # "2010_06_19": "2010_06_19.u.9comp_norj.txt",
+    #                    # "2010_06_27": "2010_06_27.u.8comp_norj.txt",
+    #                    # "2010_08_27": "2010_08_27.u.7comp_norj.txt",
+    #                    # "2010_11_13": "2010_11_13.u.9comp_norj.txt",
+    #                    # "2011_02_27": "2011_02_27.u.7comp_norj.txt",
+    #                    # "2011_08_15": "2011_08_15.u.7comp_norj.txt"}
+
+    post_files_dict = {"1997_08_18": "1997_08_18.u.6comp_norj.txt",
+                       "2000_01_11": "2000_01_11.u.7comp_norj.txt",
+                       "2002_08_12": "2002_08_12.u.7comp_norj.txt"}
+
+    # TODO: Waiting for 8 components of both epochs
+    post_files_dict = {"2002_08_12": "2002_08_12.u.7comp_norj.txt",
+                       "2003_03_29": "2003_03_29.u.7comp_norj.txt"}
+    # TODO: Changing jet direction (both core PA and whole jet)
+    post_files_dict = {"2003_03_29": "2003_03_29.u.7comp_norj.txt",
+                       "2004_10_18": "2004_10_18.u.7comp_norj.txt"}
+    post_files_dict = {"2004_10_18": "2004_10_18.u.7comp_norj.txt",
+                       "2005_05_13": "2005_05_13.u.8comp_norj.txt"}
+    # Both 7 and 8 components look consistent
+    post_files_dict = {"2005_05_13": "2005_05_13.u.7comp_norj.txt",
+                       "2005_09_23": "2005_09_23.u.7comp_norj.txt"}
+    # Both 7 and 8 components look consistent
+    post_files_dict = {"2005_09_23": "2005_09_23.u.7comp_norj.txt",
+                       "2005_10_29": "2005_10_29.u.7comp_norj.txt"}
+    # 7 comps for 11_17 results in component at (1.3, -3) with 10 mJy and size
+    # ~ 0.3 mas (modelling diffuse emission)
+    post_files_dict = {"2005_10_29": "2005_10_29.u.7comp_norj.txt",
+                       "2005_11_17": "2005_11_17.u.6comp_norj.txt"}
+    # 7 comp for 07_07 results in component at (-0.5, -0.5) with 5 mJy and size
+    # ~ 0.1 mas
+    post_files_dict = {"2005_11_17": "2005_11_17.u.6comp_norj.txt",
+                       "2006_07_07": "2006_07_07.u.6comp_norj.txt"}
+    post_files_dict = {"2006_07_07": "2006_07_07.u.6comp_norj.txt",
+                       "2007_08_16": "2007_08_16.u.7comp_norj.txt"}
+    # Not so clear, but S-shaped jet is evident
+    post_files_dict = {"2007_08_16": "2007_08_16.u.7comp_norj.txt",
+                       "2008_06_25": "2008_06_25.u.7comp_norj.txt"}
+    # 08_06 8 components coincides with difmap model
+    post_files_dict = {"2008_06_25": "2008_06_25.u.7comp_norj.txt",
+                       "2008_08_06": "2008_08_06.u.8comp_norj.txt"}
+    # FIXME: Unclear how many components to use for 11_19. There's one
+    # suspicious at r=(0.75, -0.6) with 30-40 mJy and 1 mas size that falls out
+    # of thrend with r. Possibly represent extended structure. And even for
+    # 8-component model there's at r=(0.5, -0.3) with 20-30 mJy and 0.01-0.1 mas
+    # size. Only 7-component model doesn't have such
+    post_files_dict = {"2008_08_06": "2008_08_06.u.7comp_norj.txt",
+                       "2008_11_19": "2008_11_19.u.7comp_norj.txt"}
+    # TODO: Waiting for 9 component 2009_03_25, however even 8 components
+    # results in 6 mJy, 0.1 mas component at r=(0.8, -0.1)
+    post_files_dict = {"2008_11_19": "2008_11_19.u.9comp_norj.txt",
+                       "2009_03_25": "2009_03_25.u.8comp_norj.txt"}
+    # Abrupt change in jet direction on 50 deg
+    post_files_dict = {"2009_03_25": "2009_03_25.u.7comp_norj.txt",
+                       "2009_12_10": "2009_12_10.u.8comp_norj.txt"}
+    # TODO: Waiting 7 component of 06_19, but 8 component model coincides with difmap.
+    # TODO: Waiting 9 component of 12_10
+    post_files_dict = {"2009_12_10": "2009_12_10.u.8comp_norj.txt",
+                       "2010_06_19": "2010_06_19.u.8comp_norj.txt"}
+    # TODO: Waiting 7 component of 06_19, may be 7 & 7 coincides perfectly
+    # Now only one component of 06_19 has no counterpart in 06_27
+    post_files_dict = {"2010_06_19": "2010_06_19.u.8comp_norj.txt",
+                       "2010_06_27": "2010_06_27.u.7comp_norj.txt"}
+    post_files_dict = {"2010_06_27": "2010_06_27.u.7comp_norj.txt",
+                       "2010_08_27": "2010_08_27.u.7comp_norj.txt"}
+    # Slight change in inner and whole jet direction
+    post_files_dict = {"2010_08_27": "2010_08_27.u.7comp_norj.txt",
+                       "2010_11_13": "2010_11_13.u.7comp_norj.txt"}
+    # TODO: Waiting 6 component for 11_13
+    post_files_dict = {"2010_11_13": "2010_11_13.u.7comp_norj.txt",
+                       "2011_02_27": "2011_02_27.u.7comp_norj.txt"}
+    # Models with 6 components coincide, but 02_27 has reacher structure
+    # FIXME: Bad amp self-cal for 2011-08-15 (SC)
+    post_files_dict = {"2011_02_27": "2011_02_27.u.7comp_norj.txt",
+                       "2011_08_15": "2011_08_15.u.7comp_norj.txt"}
+
+
+
+
+    fig = plot_several_epochs(post_files_dict, ra_lim=(-3, 9), dec_lim=(-3, 2))
+
