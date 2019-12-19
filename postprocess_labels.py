@@ -147,6 +147,38 @@ def sort_samples_by_F(samples, comp_length=4):
     return np.atleast_2d(new_samples)
 
 
+def cluster_by_flux_size(samples, comp_length=4):
+    cluster_components = dict()
+    n_clusters = int(len(samples[0]) / comp_length)
+    xs = list()
+    ys = list()
+    fluxes = list()
+    sizes = list()
+    for sample in samples:
+        xs.extend(get_x(sample, comp_length))
+        ys.extend(get_y(sample, comp_length))
+        fluxes.extend(get_F(sample, comp_length))
+        sizes.extend(get_size(sample, comp_length))
+
+    components = np.vstack((xs, ys, fluxes, sizes)).T
+
+    X = np.vstack((fluxes, sizes)).T
+
+    from sklearn.cluster import SpectralClustering, AgglomerativeClustering
+    from sklearn.mixture import GaussianMixture
+    # clustering = SpectralClustering(n_clusters=n_clusters, affinity="nearest_neighbors",
+    #                                 n_neighbors=10,
+    #                                 assign_labels="discretize", random_state=0)
+    # clustering = AgglomerativeClustering(n_clusters=n_clusters, linkage="single")
+    clustering = GaussianMixture(n_components=n_clusters, n_init=20, reg_covar=1e-10, tol=1e-5, max_iter=1000)
+    y_pred = clustering.fit_predict(X)
+    for i in range(n_clusters):
+        idx = y_pred == i
+        cluster_components[i] = components[idx]
+
+    return cluster_components
+
+
 def find_component_xy_location_covariance(xy, type="mincovdet"):
     if type == "mincovdet":
         robust_cov = MinCovDet().fit(xy)
@@ -160,6 +192,17 @@ def find_component_xy_location_covariance(xy, type="mincovdet"):
     else:
         raise Exception("type must be mincovdet or gmm!")
     return location, covariance
+
+
+def find_ellipse_angle(cov):
+    """
+    :param cov:
+        2x2 covariance.
+    """
+    v, w = np.linalg.eigh(cov[:2, :2])
+    u = w[0] / np.linalg.norm(w[0])
+    angle = np.arctan2(u[1], u[0])
+    return 180 * angle / np.pi
 
 
 def make_ellipses(cov, location, ax):
