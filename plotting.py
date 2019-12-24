@@ -181,16 +181,22 @@ def process_norj_samples(post_file, jitter_first=True,
     return fig1, fig2, fig3, fig4, fig5, fig6, fig7
 
 
-def plot_corner(samples, savefn=None, truths=None):
+def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
+                jitter_first=False):
     columns = list()
-    for i in range(1, int(len(samples[0])/4)+1):
+    j = 0
+    if jitter_first:
+        j = 1
+    for i in range(1, int(len(samples[0, j:])/4)+1):
         columns.append([r"$x_{}$".format(i), r"$y_{}$".format(i),
-                        r"$flux_{}$".format(i), r"$bmaj_{}$".format(i)])
+                        r"$\log{flux_{%s}}$" % str(i), r"$\log{bmaj_{%s}}$" % str(i)])
     columns = [item for sublist in columns for item in sublist]
+    if jitter_first:
+        columns.insert(0, r"$\log{\sigma_{\rm jitter}}$")
     fig = corner.corner(samples, labels=columns, truths=truths,
                         show_titles=True, quantiles=[0.16, 0.5, 0.84],
                         color="gray", truth_color="#1f77b4",
-                        plot_contours=True, range=[0.975]*len(columns),
+                        plot_contours=True, range=[range_frac]*len(columns),
                         plot_datapoints=False, fill_contours=True,
                         levels=(0.393, 0.865, 0.989),
                         hist2d_kwargs={"plot_datapoints": False,
@@ -504,7 +510,7 @@ if __name__ == "__main__":
     fig = plot_core_direction_several_epochs({"1997_08_18": ["1997_08_18.u.5comp_norj.txt", "1997_08_18.u.6comp_norj.txt", "1997_08_18.u.7comp_norj.txt", "1997_08_18.u.8comp_norj.txt"],
                                               "2000_01_11": ["2000_01_11.u.6comp_norj.txt", "2000_01_11.u.7comp_norj.txt", "2000_01_11.u.8comp_norj.txt", "2000_01_11.u.9comp_norj.txt"],
                                               "2002_08_12": ["2002_08_12.u.4comp_norj.txt", "2002_08_12.u.5comp_norj.txt", "2002_08_12.u.6comp_norj.txt", "2002_08_12.u.7comp_norj.txt", "2002_08_12.u.8comp_norj.txt"],
-                                              "2003_03_29": ["2003_03_29.u.6comp_norj.txt", "2003_03_29.u.7comp_norj.txt", "2003_03_29.u.8comp_norj.txt"],
+                                              "2003_03_29": ["2003_03_29.u.6comp_norj.txt", "2003_03_29.u.7comp_norj.txt", "2003_03_29.u.8comp_norj.txt", "2003_03_29.u.9comp_norj.txt"],
                                               "2004_10_18": ["2004_10_18.u.6comp_norj.txt", "2004_10_18.u.7comp_norj.txt", "2004_10_18.u.8comp_norj.txt"],
                                               "2005_05_13": ["2005_05_13.u.6comp_norj.txt", "2005_05_13.u.7comp_norj.txt", "2005_05_13.u.8comp_norj.txt", "2005_05_13.u.9comp_norj.txt"],
                                               "2005_09_23": ["2005_09_23.u.6comp_norj.txt", "2005_09_23.u.7comp_norj.txt", "2005_09_23.u.8comp_norj.txt" ],
@@ -556,7 +562,7 @@ if __name__ == "__main__":
     fig = plot_core_direction_several_epochs({"1997_08_18": ["1997_08_18.u.8comp_norj.txt"],
                                               "2000_01_11": ["2000_01_11.u.9comp_norj.txt"],
                                               "2002_08_12": ["2002_08_12.u.8comp_norj.txt"],
-                                              "2003_03_29": ["2003_03_29.u.8comp_norj.txt"],
+                                              "2003_03_29": ["2003_03_29.u.9comp_norj.txt"],
                                               "2004_10_18": ["2004_10_18.u.8comp_norj.txt"],
                                               "2005_05_13": ["2005_05_13.u.9comp_norj.txt"],
                                               "2005_09_23": ["2005_09_23.u.8comp_norj.txt"],
@@ -622,9 +628,9 @@ if __name__ == "__main__":
                        "2000_01_11": "2000_01_11.u.7comp_norj.txt",
                        "2002_08_12": "2002_08_12.u.7comp_norj.txt"}
 
-    # TODO: Waiting for 8 components of both epochs
+    # TODO: Waiting for 9 components of both epochs
     post_files_dict = {"2002_08_12": "2002_08_12.u.7comp_norj.txt",
-                       "2003_03_29": "2003_03_29.u.7comp_norj.txt"}
+                       "2003_03_29": "2003_03_29.u.8comp_norj.txt"}
     # TODO: Changing jet direction (both core PA and whole jet)
     post_files_dict = {"2003_03_29": "2003_03_29.u.7comp_norj.txt",
                        "2004_10_18": "2004_10_18.u.7comp_norj.txt"}
