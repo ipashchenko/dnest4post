@@ -59,6 +59,18 @@ def sort_samples_by_F(samples, n_comp, comp_length=4, jitter_first=True):
     return np.atleast_2d(new_samples)
 
 
+def scans(times):
+    times = np.sort(np.array(times))
+    a, b = np.histogram(times[1:] - times[:-1])
+    scan_borders = times[(np.where((times[1:] - times[:-1]) > b[1])[0])]
+    scans_list = [[times[0], scan_borders[0]]]
+    for i in range(len(scan_borders) - 1):
+        scans_list.append([float(times[np.where(times == scan_borders[i])[0] + 1]),
+                           scan_borders[i + 1]])
+    scans_list.append([float(times[np.where(times == scan_borders[i + 1])[0] + 1]),
+                       times[-1]])
+    return scans_list
+
 
 def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp=1, plotfn=None,
                           with_mean_phase=True, add_mean_phase=False):
@@ -113,30 +125,99 @@ def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp
 
         j += gains_len[ant]["amp"] + gains_len[ant]["phase"] + h
 
-    fig, axes = plt.subplots(len(gains_len), 2, sharex=True, figsize=(8, 20))
+    # Find scans
+    times = list()
+    for ant in antennas:
+        times.extend(list(gains_post[ant]['amp'].keys()))
+    times = set(times)
+    times = list(times)
+    scans_list = scans(times)
+    n_scans = len(scans_list)
+
+    fig, axes = plt.subplots(len(gains_len), n_scans, sharex=True, sharey=False, figsize=(12, 20),
+                             gridspec_kw={'wspace': 0.3, 'hspace': 0.2})
     for i, ant in enumerate(gains_post):
         print("Plotting antenna ", ant)
-        for t in gains_post[ant]["amp"].keys():
-            # Array with posterior for given t
-            amp = gains_post[ant]["amp"][t]
-            ts = np.array([t]*len(amp))
-            alpha = 1e-5*len(amp)
-            ts += np.random.normal(loc=0, scale=0.05, size=len(ts))
-            axes[i, 0].scatter(ts, amp, color="#1f77b4", alpha=alpha)
-        for t in gains_post[ant]["phase"].keys():
-            phase = gains_post[ant]["phase"][t]
-            ts = np.array([t]*len(phase))
-            alpha = 1e-5*len(phase)
-            ts += np.random.normal(loc=0, scale=0.05, size=len(ts))
-            axes[i, 1].scatter(ts, phase, color="#1f77b4", alpha=alpha)
-        axes[i, 1].yaxis.set_ticks_position("right")
-    axes[0, 0].set_title("Amplitudes")
-    axes[0, 1].set_title("Phases")
-    axes[i, 0].set_xlabel("time, s")
-    axes[i, 1].set_xlabel("time, s")
+
+        for scan_number, scan in enumerate(scans_list):
+            t_low, t_up = scan
+            t0 = None
+            for t in sorted(gains_post[ant]["amp"].keys()):
+                if not t_low <= t <= t_up:
+                    continue
+                if t0 is None:
+                    t0 = t
+                # Array with posterior for given t
+                amp = gains_post[ant]["amp"][t]
+                ts = np.array([t-t0]*len(amp))
+                alpha = 1e-5*len(amp)
+                ts += np.random.normal(loc=0, scale=1.0, size=len(ts))
+                axes[i, scan_number].scatter(ts, amp, color="#1f77b4", alpha=alpha, s=2)
+                axes[i, scan_number].axhline(1.0, color="C1", lw=0.5)
+
+    fig.text(0.5, 0.04, 'scan time, s', ha='center')
+    fig.text(0.04, 0.5, 'Gain amplitude', va='center', rotation='vertical')
+
     if plotfn:
-        fig.savefig(plotfn, bbox_inches="tight", dpi=100)
+        fig.savefig(plotfn+"_amplitudes.png", bbox_inches="tight", dpi=100)
     fig.show()
+
+
+    fig, axes = plt.subplots(len(gains_len), n_scans, sharex=True, sharey=False, figsize=(12, 20),
+                             gridspec_kw={'wspace': 0.3, 'hspace': 0.2})
+    for i, ant in enumerate(gains_post):
+        print("Plotting antenna ", ant)
+
+        for scan_number, scan in enumerate(scans_list):
+            t_low, t_up = scan
+            t0 = None
+            for t in sorted(gains_post[ant]["phase"].keys()):
+                if not t_low <= t <= t_up:
+                    continue
+                if t0 is None:
+                    t0 = t
+                # Array with posterior for given t
+                phase = gains_post[ant]["phase"][t]
+                ts = np.array([t-t0]*len(phase))
+                alpha = 1e-5*len(phase)
+                ts += np.random.normal(loc=0, scale=1.0, size=len(ts))
+                axes[i, scan_number].scatter(ts, phase, color="#1f77b4", alpha=alpha, s=2)
+                axes[i, scan_number].axhline(0.0, color="C1", lw=0.5)
+
+    fig.text(0.5, 0.04, 'scan time, s', ha='center')
+    fig.text(0.04, 0.5, 'Gain phase, rad', va='center', rotation='vertical')
+
+    if plotfn:
+        fig.savefig(plotfn+"_phases.png", bbox_inches="tight", dpi=100)
+    fig.show()
+
+
+    # fig, axes = plt.subplots(len(gains_len), n_scans, sharex=False, sharey=False, figsize=(12, 20),
+    #                          gridspec_kw={'wspace': 0.2, 'hspace': 0.0})
+    #
+    # for i, ant in enumerate(gains_post):
+    #     print("Plotting antenna ", ant)
+    #
+    #     for scan_number, scan in enumerate(scans_list):
+    #         t_low, t_up = scan
+    #         for t in gains_post[ant]["phase"].keys():
+    #             if not t_low <= t <= t_up:
+    #                 continue
+    #             phase = gains_post[ant]["phase"][t]
+    #             ts = np.array([t] * len(phase))
+    #             alpha = 3e-5 * len(phase)
+    #             ts += np.random.normal(loc=0, scale=0.05, size=len(ts))
+    #
+    #             axes[i, scan_number].scatter(ts, phase, color="#1f77b4", alpha=alpha, s=2.0)
+    #             axes[i, scan_number].axhline(0.0, color="C1", lw=0.5)
+    #
+    #     axes[i, scan_number].yaxis.set_ticks_position("right")
+    # axes[i, 0].set_xlabel("time, s")
+    # fig.tight_layout()
+    # if plotfn:
+    #     fig.savefig(plotfn + "_phases.png", bbox_inches="tight", dpi=100)
+    # fig.show()
+
     return gains_post
 
 
@@ -153,6 +234,7 @@ def position_uncertainty(gains_posterior, df_fitted, lims=(-0.5, 0.5),
     :param df_fitted:
         Dataframe fitted (created by ``create_data_file`` and ``inject_gains``).
     """
+    from pycircstat.descriptive import cdiff
     from scipy.stats import scoreatpercentile
     import matplotlib.pyplot as plt
     import astropy.units as u
@@ -168,8 +250,9 @@ def position_uncertainty(gains_posterior, df_fitted, lims=(-0.5, 0.5),
         v = row.v
         phi_j_post = gains_posterior[ant1]["phase"][t]
         phi_k_post = gains_posterior[ant2]["phase"][t]
-        delta_phi_jk_post = phi_j_post - phi_k_post
-        low, med, up = scoreatpercentile(delta_phi_jk_post, [2.5, 50, 97.5])
+        delta_phi_jk_post = cdiff(phi_j_post, phi_k_post)
+        low, med, up = scoreatpercentile(delta_phi_jk_post, [16, 50, 84])
+        print(low, med, up)
         a = -u/v
         b_low = low*rad_to_mas/(2*np.pi*v)
         b_med = med*rad_to_mas/(2*np.pi*v)

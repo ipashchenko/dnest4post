@@ -182,7 +182,7 @@ def process_norj_samples(post_file, jitter_first=True,
 
 
 def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
-                jitter_first=False):
+                jitter_first=False, plot_range=None):
     columns = list()
     j = 0
     if jitter_first:
@@ -193,10 +193,12 @@ def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
     columns = [item for sublist in columns for item in sublist]
     if jitter_first:
         columns.insert(0, r"$\log{\sigma_{\rm jitter}}$")
+    if plot_range is None:
+        plot_range = [range_frac] * len(columns)
     fig = corner.corner(samples, labels=columns, truths=truths,
                         show_titles=True, quantiles=[0.16, 0.5, 0.84],
                         color="gray", truth_color="#1f77b4",
-                        plot_contours=True, range=[range_frac]*len(columns),
+                        plot_contours=True, range=plot_range,
                         plot_datapoints=False, fill_contours=True,
                         levels=(0.393, 0.865, 0.989),
                         hist2d_kwargs={"plot_datapoints": False,
