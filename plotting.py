@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 from astropy import units as u
 from astropy import constants as const
 from matplotlib.patches import Ellipse, Circle
@@ -21,6 +22,18 @@ mas_to_rad = u.mas.to(u.rad)
 # Speed of light [cm / s]
 c = const.c.cgs.value
 k = const.k_B.cgs.value
+
+import matplotlib
+
+label_size = 16
+matplotlib.rcParams['xtick.labelsize'] = label_size
+matplotlib.rcParams['ytick.labelsize'] = label_size
+matplotlib.rcParams['axes.titlesize'] = label_size
+matplotlib.rcParams['axes.labelsize'] = label_size
+matplotlib.rcParams['font.size'] = label_size
+matplotlib.rcParams['legend.fontsize'] = label_size
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
 
 
 def gaussian_circ_ft(flux, dx, dy, bmaj, uv):
@@ -182,7 +195,7 @@ def process_norj_samples(post_file, jitter_first=True,
 
 
 def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
-                jitter_first=False, plot_range=None):
+                jitter_first=False, plot_range=None, skip_first_coordinates=True):
     columns = list()
     j = 0
     if jitter_first:
@@ -191,6 +204,12 @@ def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
         columns.append([r"$x_{}$".format(i), r"$y_{}$".format(i),
                         r"$\log{flux_{%s}}$" % str(i), r"$\log{bmaj_{%s}}$" % str(i)])
     columns = [item for sublist in columns for item in sublist]
+    if skip_first_coordinates:
+        columns = columns[2:]
+        if jitter_first:
+            samples = np.hstack((samples[:, 0].reshape(1, -1).T, samples[:, 3:]))
+        else:
+            samples = samples[:, 2:]
     if jitter_first:
         columns.insert(0, r"$\log{\sigma_{\rm jitter}}$")
     if plot_range is None:
@@ -497,18 +516,19 @@ def rj_plot_ncomponents_distribution(posterior_file="posterior_sample.txt",
     plt.show()
 
 
-if __name__ == "__main__":
-    import matplotlib
+def plot_per_antenna_jitters(samples, n_jitters=10):
+    data = [samples[:, i] for i in range(n_jitters)]
+    labels = [str(i) for i in range(n_jitters)]
+    df = pd.DataFrame.from_items(zip(labels, data))
+    axes = sns.boxplot(data=df, orient='h')
+    axes.set_xlabel(r"$\log{\sigma_{\rm ant}}$")
+    axes.set_ylabel("Antenna")
+    plt.tight_layout()
+    plt.show()
+    return axes
 
-    label_size = 16
-    matplotlib.rcParams['xtick.labelsize'] = label_size
-    matplotlib.rcParams['ytick.labelsize'] = label_size
-    matplotlib.rcParams['axes.titlesize'] = label_size
-    matplotlib.rcParams['axes.labelsize'] = label_size
-    matplotlib.rcParams['font.size'] = label_size
-    matplotlib.rcParams['legend.fontsize'] = label_size
-    matplotlib.rcParams['pdf.fonttype'] = 42
-    matplotlib.rcParams['ps.fonttype'] = 42
+
+if __name__ == "__main__":
     fig = plot_core_direction_several_epochs({"1997_08_18": ["1997_08_18.u.5comp_norj.txt", "1997_08_18.u.6comp_norj.txt", "1997_08_18.u.7comp_norj.txt", "1997_08_18.u.8comp_norj.txt"],
                                               "2000_01_11": ["2000_01_11.u.6comp_norj.txt", "2000_01_11.u.7comp_norj.txt", "2000_01_11.u.8comp_norj.txt", "2000_01_11.u.9comp_norj.txt"],
                                               "2002_08_12": ["2002_08_12.u.4comp_norj.txt", "2002_08_12.u.5comp_norj.txt", "2002_08_12.u.6comp_norj.txt", "2002_08_12.u.7comp_norj.txt", "2002_08_12.u.8comp_norj.txt"],
