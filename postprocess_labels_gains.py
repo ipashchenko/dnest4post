@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 # This postprocess samples of fixed number of components + gains
 
 
@@ -64,9 +65,12 @@ def scans(times):
     a, b = np.histogram(times[1:] - times[:-1])
     scan_borders = times[(np.where((times[1:] - times[:-1]) > b[1])[0])]
     scans_list = [[times[0], scan_borders[0]]]
-    for i in range(len(scan_borders) - 1):
-        scans_list.append([float(times[np.where(times == scan_borders[i])[0] + 1]),
-                           scan_borders[i + 1]])
+    if len(scan_borders) > 1:
+        for i in range(len(scan_borders) - 1):
+            scans_list.append([float(times[np.where(times == scan_borders[i])[0] + 1]),
+                               scan_borders[i + 1]])
+    else:
+        i = -1
     scans_list.append([float(times[np.where(times == scan_borders[i + 1])[0] + 1]),
                        times[-1]])
     return scans_list
@@ -150,7 +154,7 @@ def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp
                 # Array with posterior for given t
                 amp = gains_post[ant]["amp"][t]
                 ts = np.array([t-t0]*len(amp))
-                alpha = 1e-5*len(amp)
+                alpha = 6e-5*len(amp)
                 ts += np.random.normal(loc=0, scale=1.0, size=len(ts))
                 axes[i, scan_number].scatter(ts, amp, color="#1f77b4", alpha=alpha, s=2)
                 axes[i, scan_number].axhline(1.0, color="C1", lw=0.5)
@@ -179,7 +183,7 @@ def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp
                 # Array with posterior for given t
                 phase = gains_post[ant]["phase"][t]
                 ts = np.array([t-t0]*len(phase))
-                alpha = 1e-5*len(phase)
+                alpha = 6e-5*len(phase)
                 ts += np.random.normal(loc=0, scale=1.0, size=len(ts))
                 axes[i, scan_number].scatter(ts, phase, color="#1f77b4", alpha=alpha, s=2)
                 axes[i, scan_number].axhline(0.0, color="C1", lw=0.5)
@@ -191,34 +195,162 @@ def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp
         fig.savefig(plotfn+"_phases.png", bbox_inches="tight", dpi=100)
     fig.show()
 
+    return gains_post
 
-    # fig, axes = plt.subplots(len(gains_len), n_scans, sharex=False, sharey=False, figsize=(12, 20),
-    #                          gridspec_kw={'wspace': 0.2, 'hspace': 0.0})
-    #
-    # for i, ant in enumerate(gains_post):
-    #     print("Plotting antenna ", ant)
-    #
-    #     for scan_number, scan in enumerate(scans_list):
-    #         t_low, t_up = scan
-    #         for t in gains_post[ant]["phase"].keys():
-    #             if not t_low <= t <= t_up:
-    #                 continue
-    #             phase = gains_post[ant]["phase"][t]
-    #             ts = np.array([t] * len(phase))
-    #             alpha = 3e-5 * len(phase)
-    #             ts += np.random.normal(loc=0, scale=0.05, size=len(ts))
-    #
-    #             axes[i, scan_number].scatter(ts, phase, color="#1f77b4", alpha=alpha, s=2.0)
-    #             axes[i, scan_number].axhline(0.0, color="C1", lw=0.5)
-    #
-    #     axes[i, scan_number].yaxis.set_ticks_position("right")
-    # axes[i, 0].set_xlabel("time, s")
-    # fig.tight_layout()
-    # if plotfn:
-    #     fig.savefig(plotfn + "_phases.png", bbox_inches="tight", dpi=100)
-    # fig.show()
+
+def process_sampled_gains_many_IFs(posterior_sample, df_fitted, plot_IF=0, jitter_first=True, n_comp=1, plotfn=None,
+                          with_mean_phase=True, add_mean_phase=False, n_IF=4):
+    """
+    :param posterior_sample:
+        DNest file with posterior.
+    :param df_fitted:
+        Dataframe fitted (created by ``create_data_file`` and ``inject_gains``).
+    :param jitter_first: (optional)
+        Boolean. Is jitter samples go first? (default: ``True``)
+    :param n_comp: (optional)
+        Number of components in model. (default: ``1``)
+    :param plotfn: (optional)
+        File to save picture. If ``None`` than just return figure.
+    :return:
+        Dictionary with keys - antenna numbers (as in ``gains_dict``), times, ``amp``, ``phase``
+        and values - samples of the posterior distribution for amplitude and phase at given time
+        for given antenna.
+    """
+    samples = np.loadtxt(posterior_sample, skiprows=1)
+    first_gain_index = n_comp*4
+    if jitter_first:
+        first_gain_index += 1
+    gains_len = dict()
+    gains_post = dict()
+    j = first_gain_index
+    antennas = set(list(df_fitted.ant1.unique()) + list(df_fitted.ant2.unique()))
+    # Traverse each antenna
+    for ant in antennas:
+        print("Antenna ", ant)
+        # Traverse IFS for given antenna
+        gains_len[ant] = dict()
+        gains_post[ant] = dict()
+        for IF in range(n_IF):
+            print("IF ", IF)
+            gains_len[ant][IF] = dict()
+            n_amp = len(set(df_fitted.query("(ant1 == @ant or ant2 == @ant) and IF == @IF").times_amp.values))
+            n_phase = len(set(df_fitted.query("(ant1 == @ant or ant2 == @ant) and IF == @IF").times_phase.values))
+            if n_amp == 0 and n_phase == 0:
+                print("No amplitudes or phases - skipping")
+                gains_len[ant][IF] = 0
+                gains_post[ant][IF] = None
+                continue
+            gains_len[ant][IF]["amp"] = n_amp
+            gains_len[ant][IF]["phase"] = n_phase
+            gains_post[ant][IF] = dict()
+            gains_post[ant][IF]["amp"] = dict()
+            gains_post[ant][IF]["phase"] = dict()
+            if with_mean_phase:
+                gains_post[ant][IF]["mean_phase"] = samples[:, j+gains_len[ant][IF]["amp"]]
+                h = 1
+            else:
+                h = 0
+            for i, t in enumerate(df_fitted.query("(ant1 == @ant or ant2 == @ant) and IF == @IF").times_amp.unique()):
+                print("timestamp ", i, ", time ", t, ", index j = ", j)
+                gains_post[ant][IF]["amp"][t] = samples[:, j+i]
+                # +1 mean skip ``mean_phase``
+                if with_mean_phase:
+                    if add_mean_phase:
+                        gains_post[ant][IF]["phase"][t] = samples[:, j+gains_len[ant][IF]["amp"]+i+1] + gains_post[ant][IF]["mean_phase"]
+                    else:
+                        gains_post[ant][IF]["phase"][t] = samples[:, j+gains_len[ant][IF]["amp"]+i+1]
+                else:
+                    gains_post[ant][IF]["phase"][t] = samples[:, j+gains_len[ant][IF]["amp"]+i]
+            print("Increasing j...")
+            j += gains_len[ant][IF]["amp"] + gains_len[ant][IF]["phase"] + h
+
+    # Find scans
+    times = list()
+    for ant in antennas:
+        for IF in range(n_IF):
+            try:
+                times.extend(list(gains_post[ant][IF]['amp'].keys()))
+            except TypeError:
+                pass
+    times = set(times)
+    times = list(times)
+    scans_list = scans(times)
+    n_scans = len(scans_list)
+
+    fig, axes = plt.subplots(len(gains_len), n_scans, sharex=True, sharey=False, figsize=(12, 20),
+                             gridspec_kw={'wspace': 0.3, 'hspace': 0.2})
+    for i, ant in enumerate(gains_post):
+        print("Plotting antenna ", ant)
+        # if ant == 6:
+        #     break
+
+        for IF in range(n_IF):
+            print("Plotting IF ", IF)
+
+            if gains_post[ant][IF] is None:
+                print("Skipping ant={}, IF={}", format(str(ant), str(IF)))
+                continue
+
+            for scan_number, scan in enumerate(scans_list):
+                print("Plotting scan ", scan_number)
+                t_low, t_up = scan
+                t0 = None
+                for t in sorted(gains_post[ant][IF]["amp"].keys()):
+                    # print("Plotting timestamp ", t)
+                    if not t_low <= t <= t_up:
+                        # print("Skipping because it is not inside ", [t_low, t_up])
+                        continue
+                    if t0 is None:
+                        print("Scan beginning ", t)
+                        t0 = t
+                    print("Plotting timestamp ", t)
+                    # Array with posterior for given t
+                    amp = gains_post[ant][IF]["amp"][t]
+                    print("Mean amplitude = ", np.median(amp))
+                    ts = np.array([t-t0]*len(amp))
+                    alpha = 6e-5*len(amp)
+                    ts += np.random.normal(loc=0, scale=1.0, size=len(ts))
+                    axes[i, scan_number].scatter(ts, amp, color="C{}".format(IF), alpha=alpha, s=2)
+                    axes[i, scan_number].axhline(1.0, color="black", lw=0.5)
+
+    fig.text(0.5, 0.04, 'scan time, s', ha='center')
+    fig.text(0.04, 0.5, 'Gain amplitude', va='center', rotation='vertical')
+
+    if plotfn:
+        fig.savefig(plotfn+"_amplitudes.png", bbox_inches="tight", dpi=100)
+    fig.show()
+
+
+    fig, axes = plt.subplots(len(gains_len), n_scans, sharex=True, sharey=False, figsize=(12, 20),
+                             gridspec_kw={'wspace': 0.3, 'hspace': 0.2})
+    for i, ant in enumerate(gains_post):
+        print("Plotting antenna ", ant)
+
+        for scan_number, scan in enumerate(scans_list):
+            t_low, t_up = scan
+            t0 = None
+            for t in sorted(gains_post[ant][plot_IF]["phase"].keys()):
+                if not t_low <= t <= t_up:
+                    continue
+                if t0 is None:
+                    t0 = t
+                # Array with posterior for given t
+                phase = gains_post[ant][plot_IF]["phase"][t]
+                ts = np.array([t-t0]*len(phase))
+                alpha = 6e-5*len(phase)
+                ts += np.random.normal(loc=0, scale=1.0, size=len(ts))
+                axes[i, scan_number].scatter(ts, phase, color="#1f77b4", alpha=alpha, s=2)
+                axes[i, scan_number].axhline(0.0, color="C1", lw=0.5)
+
+    fig.text(0.5, 0.04, 'scan time, s', ha='center')
+    fig.text(0.04, 0.5, 'Gain phase, rad', va='center', rotation='vertical')
+
+    if plotfn:
+        fig.savefig(plotfn+"_phases.png", bbox_inches="tight", dpi=100)
+    fig.show()
 
     return gains_post
+
 
 
 def position_uncertainty(gains_posterior, df_fitted, lims=(-0.5, 0.5),
