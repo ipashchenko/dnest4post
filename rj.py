@@ -3,6 +3,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from postprocess_labels_gains import (sort_samples_by_r)
 from plotting import plot_position_posterior
+from plotting import plot_corner as plot_corner_norj
 
 
 label_size = 16
@@ -73,5 +74,14 @@ def infer_column_positions(post_file, name):
     names = fo.readline()
     names = names.strip("\n# ")
     names = names.split()
-
     return [i for i, x in enumerate(names) if x == name]
+
+
+def plot_corner(post_file, n_comp, n_max=30, savefn=None, truths=None, range_frac=1.0,
+                jitter_first=False, plot_range=None, skip_first_coordinates=True):
+    post_samples = np.loadtxt(post_file, skiprows=1)
+    n_samples = get_samples_for_each_n(post_samples, jitter_first, n_max=n_max)
+    samples = sort_samples_by_r(n_samples[n_comp], n_comp, comp_length=4,
+                                jitter_first=jitter_first)
+    return plot_corner_norj(samples, savefn, truths, range_frac,
+                            jitter_first, plot_range, skip_first_coordinates)
