@@ -2,6 +2,10 @@ import copy
 import numpy as np
 import numpy.random as rng
 from loadings import my_loadtxt, loadtxt_rows
+import matplotlib
+matplotlib.use('TKAgg', force=True)
+from matplotlib import pyplot as plt
+print("Switched to: ", matplotlib.get_backend())
 
 
 def logsumexp(values):
@@ -22,13 +26,16 @@ def logdiffexp(x1, x2):
 def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
                 save=True, zoom_in=True, compression_bias_min=1., verbose=True,
                 compression_scatter=0., moreSamples=1., compression_assert=None,
-                single_precision=False, rng_seed=None):
+                single_precision=False, rng_seed=None,
+                sample_file="sample.txt", level_file="levels.txt",
+                sample_info_file="sample_info.txt",
+                post_sample_file="posterior_sample.txt"):
     if rng_seed is not None:
         rng.seed(rng_seed)
 
     if len(loaded) == 0:
-        levels_orig = np.atleast_2d(my_loadtxt("levels.txt"))
-        sample_info = np.atleast_2d(my_loadtxt("sample_info.txt"))
+        levels_orig = np.atleast_2d(my_loadtxt(level_file))
+        sample_info = np.atleast_2d(my_loadtxt(sample_info_file))
     else:
         levels_orig, sample_info = loaded[0], loaded[1]
 
@@ -212,7 +219,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         rows[i] = which + cut
 
     # Get header row
-    f = open("sample.txt", "r")
+    f = open(sample_file, "r")
     line = f.readline()
     if line[0] == "#":
         header = line[1:]
@@ -220,7 +227,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         header = ""
     f.close()
 
-    sample = loadtxt_rows("sample.txt", set(rows), single_precision)
+    sample = loadtxt_rows(sample_file, set(rows), single_precision)
     posterior_sample = None
     if single_precision:
         posterior_sample = np.empty((N, sample["ncol"]), dtype="float32")
@@ -234,10 +241,10 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         np.savetxt("log_prior_weights.txt", logp_samples)
         np.savetxt('weights.txt', w)
         if single_precision:
-            np.savetxt("posterior_sample.txt", posterior_sample, fmt="%.7e",
+            np.savetxt(post_sample_file, posterior_sample, fmt="%.7e",
                        header=header)
         else:
-            np.savetxt("posterior_sample.txt", posterior_sample, header=header)
+            np.savetxt(post_sample_file, posterior_sample, header=header)
 
     if plot:
         plt.show()
