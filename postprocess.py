@@ -2,10 +2,7 @@ import copy
 import numpy as np
 import numpy.random as rng
 from loadings import my_loadtxt, loadtxt_rows
-import matplotlib
-matplotlib.use('TKAgg', force=True)
 from matplotlib import pyplot as plt
-print("Switched to: ", matplotlib.get_backend())
 
 
 def logsumexp(values):
