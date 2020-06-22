@@ -93,6 +93,7 @@ def sort_sample_by_r(sample, comp_length=4):
     Sort sample such that component with lowest distance from phase centet goes
     first.
 
+
     :param sample:
         Iterable of component properties, i.e. [x1, x2, F1, size1, x2, y2, F2,
         size2, ...].
@@ -103,6 +104,24 @@ def sort_sample_by_r(sample, comp_length=4):
     """
     r = get_r(sample, comp_length)
     indices = np.argsort(r)
+    # Construct re-labelled sample
+    return np.hstack([sample[i*comp_length: (i+1)*comp_length] for i in
+                      indices])
+
+
+def sort_sample_by_DEC(sample, comp_length=4, inverse=False):
+    dec = get_x(sample, comp_length)
+    indices = np.argsort(dec)
+    if inverse:
+        indices = indices[::-1]
+    # Construct re-labelled sample
+    return np.hstack([sample[i*comp_length: (i+1)*comp_length] for i in
+                      indices])
+
+
+def sort_sample_by_RA(sample, comp_length=4):
+    ra = get_y(sample, comp_length)
+    indices = np.argsort(ra)
     # Construct re-labelled sample
     return np.hstack([sample[i*comp_length: (i+1)*comp_length] for i in
                       indices])
@@ -134,6 +153,26 @@ def sort_samples_by_r(samples, comp_length=4):
     new_samples = list()
     for sample in samples:
         new_samples.append(sort_sample_by_r(sample, comp_length))
+    return np.atleast_2d(new_samples)
+
+
+def sort_samples_by_dec(samples, comp_length=4, inverse=False):
+    """
+    Sort each sample by DEC.
+    """
+    new_samples = list()
+    for sample in samples:
+        new_samples.append(sort_sample_by_DEC(sample, comp_length, inverse=inverse))
+    return np.atleast_2d(new_samples)
+
+
+def sort_samples_by_ra(samples, comp_length=4):
+    """
+    Sort each sample by RA.
+    """
+    new_samples = list()
+    for sample in samples:
+        new_samples.append(sort_sample_by_RA(sample, comp_length))
     return np.atleast_2d(new_samples)
 
 
