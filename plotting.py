@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from astropy import units as u
 from astropy import constants as const
+from astropy.stats import mad_std
 from matplotlib.patches import Ellipse, Circle
 from sklearn.covariance import MinCovDet
 from sklearn.mixture import GaussianMixture as GMM
@@ -11,9 +12,11 @@ import datetime
 import sys
 sys.path.insert(0, '/home/ilya/github/ve/vlbi_errors')
 from spydiff import import_difmap_model
+from postprocess import postprocess
 # import seaborn as sns
 import corner
 from postprocess_labels import (sort_samples_by_r, sort_samples_by_F,
+                                sort_samples_by_ra, sort_samples_by_dec,
                                 find_component_xy_location_covariance,
                                 find_ellipse_angle)
 from postprocess_labels_rj import get_samples_for_each_n
@@ -73,15 +76,42 @@ def process_rj_samples(post_file, n_comp, n_max, jitter_first=True, savefn=None,
     return fig
 
 
-def plot_core_direction_several_epochs(post_files_dict, jitter_first=True, color=None, fig=None):
+def create_post_samples_dict_from_samples(source):
+    import glob
+    sample_files = sorted(glob.glob("sample_{}*.txt".format(source)))
+    epochs = list()
+    for sample_file in sample_files:
+        epoch = sample_file[16:26]
+        epochs.append(epoch)
+    sample_info_files = sorted(glob.glob("sample_info_{}*.txt".format(source)))
+    levels_files = sorted(glob.glob("levels_{}*.txt".format(source)))
+
+    post_dict = dict()
+    for epoch, sample_file, sample_info_file, levels_file in zip(epochs, sample_files, sample_info_files, levels_files):
+        postprocess(plot=False,
+                    sample_file=sample_file, level_file=levels_file,
+                    sample_info_file=sample_info_file,
+                    post_sample_file="post_sample_{}_{}.txt".format(source, epoch))
+        post_dict.update({epoch: ["post_sample_{}_{}.txt".format(source, epoch)]})
+
+    return post_dict
+
+
+def plot_core_direction_several_epochs(post_files_dict, jitter_first=True,
+                                       color=None, fig=None, use_lines=True,
+                                       sort_by="flux", r_lim=0.3):
+    if sort_by not in ("flux", "r", "ra", "dec"):
+        raise Exception
+    print("Warning: considering core as the brightest component!")
     if color is None:
         color = plt.rcParams['axes.prop_cycle'].by_key()['color'][0]
     if fig is None:
-        fig, axes = plt.subplots(1, 1)
+        fig, axes = plt.subplots(2, 1, sharex=True)
     else:
         axes = fig.get_axes()[0]
     dates = list()
     angles = list()
+    fluxes = list()
     for i, (epoch, post_files) in enumerate(post_files_dict.items()):
         print("Processing epoch {}".format(epoch))
         for post_file in post_files:
@@ -89,8 +119,28 @@ def plot_core_direction_several_epochs(post_files_dict, jitter_first=True, color
             if jitter_first:
                 samples = samples[:, 1:]
 
-            samples = sort_samples_by_F(samples)
+            if sort_by == "flux":
+                samples = sort_samples_by_F(samples)
+            elif sort_by == "r":
+                samples = sort_samples_by_r(samples)
+            elif sort_by == "ra":
+                samples = sort_samples_by_ra(samples)
+            elif sort_by == "dec":
+                samples = sort_samples_by_dec(samples)
+
+            checked_samples = list()
+            for sample in samples:
+                if np.hypot(sample[0], sample[1]) < r_lim:
+                    checked_samples.append(sample)
+
+            samples = np.atleast_2d(checked_samples)
             xy = samples[:, 0:2] - np.median(samples[:, 0:2], axis=0)
+            flux = np.median(samples[:, 2])
+            print("flux(Jy) = ", np.exp(flux))
+            x = np.median(samples[:, 0])
+            y = np.median(samples[:, 1])
+            r = np.hypot(x, y)
+            print("R = ", r)
             try:
                 loc, cov = find_component_xy_location_covariance(xy)
             except ValueError:
@@ -107,16 +157,32 @@ def plot_core_direction_several_epochs(post_files_dict, jitter_first=True, color
                 angle -= 180
             elif angle < -90:
                 angle += 180
+
+            if angle > 50:
+                angle -= 180
             angles.append(angle)
+            fluxes.append(flux)
             dates.append(datetime.datetime.strptime(epoch, '%Y_%m_%d'))
 
     angles = np.rad2deg(np.unwrap(np.deg2rad(angles)))
-    angles[angles < -60] += 180
-    axes.scatter(dates, angles, s=10, color=color)
+    # angles[angles < -60] += 180
+    if not use_lines:
+        axes[0].scatter(dates, angles, s=10, color=color)
+    else:
+        axes[0].plot(dates, angles, '.', color=color)
+        axes[0].plot(dates, angles, color=color)
     # axes.set_ylim([0, 180])
-    axes.set_xlabel("Date")
-    axes.set_ylabel("Core angle - N-E, deg")
+    # axes.set_xlabel("Date")
+    axes[0].set_ylabel("Core angle - N-E, deg")
     # axes.set_aspect("equal")
+
+    if not use_lines:
+        axes[1].scatter(dates, np.exp(fluxes), s=10, color=color)
+    else:
+        axes[1].plot(dates, np.exp(fluxes), color=color)
+        axes[1].plot(dates, np.exp(fluxes), '.', color=color)
+    axes[1].set_xlabel("Date")
+    axes[1].set_ylabel("Core flux, Jy")
 
     return fig
 
@@ -162,22 +228,76 @@ def plot_several_epochs(post_files_dict, jitter_first=True, ra_lim=(-10, 10),
     return fig
 
 
+def shift_posterior_to_centermass(post_file, jitter_first=False, sort_by="r",
+                                  inverse=False, ra_lim=(-10, 10),
+                                  dec_lim=(-10, 10),
+                                  difmap_model_fn=None,
+                                  savefn_position_post=None):
+    if sort_by not in ("flux", "r", "ra", "dec"):
+        raise Exception
+
+    data = np.loadtxt(post_file)
+    if jitter_first:
+        data = data[:, 1:]
+
+    n_comps = int(data.shape[1]/4)
+
+    if sort_by == "flux":
+        data = sort_samples_by_F(data)
+    elif sort_by == "r":
+        data = sort_samples_by_r(data)
+    elif sort_by == "ra":
+        data = sort_samples_by_ra(data)
+    elif sort_by == "dec":
+        data = sort_samples_by_dec(data, inverse=inverse)
+
+    # Find center mass
+    x_c = 0.0
+    y_c = 0.0
+    tot_flux = 0.0
+    for i in range(n_comps):
+        flux = np.exp(data[:, 2+4*i])
+        x_c += data[:, 0+4*i]*flux
+        y_c += data[:, 1+4*i]*flux
+        tot_flux += flux
+    x_c /= tot_flux
+    y_c /= tot_flux
+
+    print("Center of mass std: ", np.std(x_c), np.std(y_c))
+    # re-center
+    for i in range(n_comps):
+        data[:, 0+4*i] -= x_c
+        data[:, 1+4*i] -= y_c
+    fig = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
+    return fig
+
+
 def process_norj_samples(post_file, jitter_first=True,
                          ra_lim=(-10, 10), dec_lim=(-10, 10), freq_ghz=15.4,
                          z=0.0,
-                         difmap_model_fn=None, data_file=None, sort_by_r=True,
+                         difmap_model_fn=None, data_file=None, sort_by="r",
                          savefn_position_post=None,
                          savefn_fluxsize_isot_post=None,
                          savefn_fluxsize_post=None,
                          savefn_rtb_post=None, savefn_sizer_post=None,
-                         savefn_radplot_post=None):
+                         savefn_radplot_post=None,
+                         savefn_sizetb_post=None, inverse=False):
+    if sort_by not in ("flux", "r", "ra", "dec"):
+        raise Exception
+
     data = np.loadtxt(post_file)
     if jitter_first:
         data = data[:, 1:]
-    if sort_by_r:
-        data = sort_samples_by_r(data)
-    else:
+
+    if sort_by == "flux":
         data = sort_samples_by_F(data)
+    elif sort_by == "r":
+        data = sort_samples_by_r(data)
+    elif sort_by == "ra":
+        data = sort_samples_by_ra(data)
+    elif sort_by == "dec":
+        data = sort_samples_by_dec(data, inverse=inverse)
+
     from postprocess_labels import cluster_by_flux_size
     cluster_components = cluster_by_flux_size(data)
     fig1 = plot_position_posterior(data, savefn_position_post, ra_lim, dec_lim, difmap_model_fn)
@@ -191,11 +311,12 @@ def process_norj_samples(post_file, jitter_first=True,
     else:
         fig6 = None
     fig7 = plot_flux_size_posterior_clusters(cluster_components)
-    return fig1, fig2, fig3, fig4, fig5, fig6, fig7
+    fig8 = plot_size_tb_posterior(data, freq_ghz, z, savefn=savefn_sizetb_post)
+    return fig1, fig2, fig3, fig4, fig5, fig6, fig7, fig8
 
 
 def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
-                jitter_first=False, plot_range=None, skip_first_coordinates=True):
+                jitter_first=False, plot_range=None, comp_coordinates_to_skip=None):
     columns = list()
     j = 0
     if jitter_first:
@@ -204,12 +325,13 @@ def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
         columns.append([r"$x_{}$".format(i), r"$y_{}$".format(i),
                         r"$\log{flux_{%s}}$" % str(i), r"$\log{bmaj_{%s}}$" % str(i)])
     columns = [item for sublist in columns for item in sublist]
-    if skip_first_coordinates:
-        columns = columns[2:]
-        if jitter_first:
-            samples = np.hstack((samples[:, 0].reshape(1, -1).T, samples[:, 3:]))
+    if comp_coordinates_to_skip is not None:
+        if not jitter_first:
+            idx_to_delete = [0+comp_coordinates_to_skip*4, 1+comp_coordinates_to_skip*4]
         else:
-            samples = samples[:, 2:]
+            idx_to_delete = [1+0+comp_coordinates_to_skip*4, 1+1+comp_coordinates_to_skip*4]
+        columns = columns[:0+comp_coordinates_to_skip*4] + columns[2+comp_coordinates_to_skip*4:]
+        samples = np.delete(samples, idx_to_delete, axis=1)
     if jitter_first:
         columns.insert(0, r"$\log{\sigma_{\rm jitter}}$")
     if plot_range is None:
@@ -231,8 +353,166 @@ def plot_corner(samples, savefn=None, truths=None, range_frac=1.0,
     return fig
 
 
+def plot_corner_ell(samples, savefn=None, truths=None, range_frac=1.0,
+                    jitter_first=False, plot_range=None,
+                    comp_coordinates_to_skip=None):
+    columns = list()
+    j = 0
+    if jitter_first:
+        j = 1
+    for i in range(1, int(len(samples[0, j:])/6)+1):
+        columns.append([r"$x_{}$".format(i), r"$y_{}$".format(i),
+                        r"$\log{flux_{%s}}$" % str(i), r"$\log{bmaj_{%s}}$" % str(i),
+                        r"$e_{}$".format(i), r"$bpa_{}$".format(i)])
+    columns = [item for sublist in columns for item in sublist]
+    if comp_coordinates_to_skip is not None:
+        if not jitter_first:
+            idx_to_delete = [0+comp_coordinates_to_skip*6, 1+comp_coordinates_to_skip*6]
+        else:
+            idx_to_delete = [1+0+comp_coordinates_to_skip*6, 1+1+comp_coordinates_to_skip*6]
+        columns = columns[:0+comp_coordinates_to_skip*6] + columns[2+comp_coordinates_to_skip*6:]
+        samples = np.delete(samples, idx_to_delete, axis=1)
+    if jitter_first:
+        columns.insert(0, r"$\log{\sigma_{\rm jitter}}$")
+    if plot_range is None:
+        plot_range = [range_frac] * len(columns)
+    fig = corner.corner(samples, labels=columns, truths=truths,
+                        show_titles=True, quantiles=[0.16, 0.5, 0.84],
+                        color="gray", truth_color="#1f77b4",
+                        plot_contours=True, range=plot_range,
+                        plot_datapoints=False, fill_contours=True,
+                        levels=(0.393, 0.865, 0.989),
+                        hist2d_kwargs={"plot_datapoints": False,
+                                       "plot_density": False,
+                                       "plot_contours": True,
+                                       "no_fill_contours": True},
+                        hist_kwargs={'ls': 'solid',
+                                     'density': True})
+    if savefn is not None:
+        fig.savefig(savefn, dpi=100, bbox_inches="tight")
+    return fig
+
+
+
+def shift_posterior(samples, new_center_component_number):
+    """
+    :param ssamples:
+        Sorted samples.
+    :param new_center_component_number:
+        Number of component in already sorted posterior that should be in phase
+        center.
+    :return:
+    :note:
+        To append jitter column use:
+        np.append(sample_with_jitter[:, 0].reshape(-1, 1), new_samples, axis=1)
+    """
+    n_comps = int(len(samples[0])/4)
+    xs = dict()
+    ys = dict()
+    fluxes = dict()
+    widths = dict()
+    n_comps = int(len(samples[0])/4)
+
+    if new_center_component_number is not None:
+        shift_x = samples[:, 0+new_center_component_number*4]
+        shift_y = samples[:, 1+new_center_component_number*4]
+    else:
+        shift_x = 0
+        shift_y = 0
+
+    for i_comp in range(n_comps):
+        xs[i_comp] = samples[:, 0+i_comp*4] - shift_x
+        ys[i_comp] = samples[:, 1+i_comp*4] - shift_y
+        fluxes[i_comp] = samples[:, 2+i_comp*4]
+        widths[i_comp] = samples[:, 3+i_comp*4]
+
+    result = list()
+    for i in range(n_comps):
+        result.extend([xs[i], ys[i], fluxes[i], widths[i]])
+
+    return np.vstack(result).T
+
+
 def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
-                            dec_lim=(-10, 10), difmap_model_fn=None):
+                            dec_lim=(-10, 10), difmap_model_fn=None,
+                            n_relative_posterior=None,
+                            n_relative_difmap=None):
+    """
+
+    :param samples:
+        Already sorted posterior samples. For nonRJ gain samples you should
+        do first ``postprocess_labebels_gains.sort_samples_by_r`` than feed
+        only non-jitter part of the sorted sampler here.
+    :param savefn:
+    :param ra_lim:
+    :param dec_lim:
+    :param difmap_model_fn:
+    :param n_relative_posterior:
+        Number of component in already sorted posterior that should be in phase
+        center.
+    :param n_relative_difmap:
+        Number of component in difmap model that should be in phase center.
+    :return:
+    """
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    xs = dict()
+    ys = dict()
+    fluxes = dict()
+    n_comps = int(len(samples[0])/4)
+
+    if n_relative_posterior is not None:
+        shift_x = samples[:, 0+n_relative_posterior*4]
+        shift_y = samples[:, 1+n_relative_posterior*4]
+    else:
+        shift_x = 0
+        shift_y = 0
+
+    for i_comp in range(n_comps):
+        xs[i_comp] = samples[:, 0+i_comp*4] - shift_x
+        ys[i_comp] = samples[:, 1+i_comp*4] - shift_y
+        fluxes[i_comp] = samples[:, 2+i_comp*4]
+
+    for i_comp, color in zip(range(n_comps), colors):
+        axes.scatter(xs[i_comp], ys[i_comp], s=0.6, color=color)
+
+    if difmap_model_fn is not None:
+        comps = import_difmap_model(difmap_model_fn)
+        print("Read {} components from {}".format(len(comps), difmap_model_fn))
+        if n_relative_difmap is not None:
+            c7comp = comps[n_relative_difmap]
+            shift_x = c7comp.p[1]
+            shift_y = c7comp.p[2]
+        else:
+            shift_x = 0
+            shift_y = 9
+
+        for comp in comps:
+            if comp.size == 3:
+                axes.scatter(-(comp.p[1]-shift_x), -(comp.p[2]-shift_y), s=80, color="black", alpha=1, marker="x")
+            elif comp.size == 4:
+                # FIXME: Here C7 is putted in the phase center
+                e = Circle((-(comp.p[1]-shift_x), -(comp.p[2]-shift_y)), comp.p[3],
+                           edgecolor="black", facecolor="red",
+                           alpha=0.05)
+                axes.add_patch(e)
+            else:
+                raise Exception("Not implemented for elliptical component!")
+
+    axes.set_xlim(ra_lim)
+    axes.set_ylim(dec_lim)
+    axes.set_xlabel("RA, mas")
+    axes.set_ylabel("DEC, mas")
+    axes.invert_xaxis()
+    axes.set_aspect("equal")
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def plot_position_posterior_gains(samples, savefn=None, ra_lim=(-10, 10),
+                                  dec_lim=(-10, 10), difmap_model_fn=None):
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     fig, axes = plt.subplots(1, 1)
     xs = dict()
@@ -251,11 +531,22 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
     if difmap_model_fn is not None:
         comps = import_difmap_model(difmap_model_fn)
         print("Read {} components from {}".format(len(comps), difmap_model_fn))
+        brightest_flux = 0.0
+        brightest_id = None
+
+        for i, comp in enumerate(comps):
+            if comp.p[0] > brightest_flux:
+                brightest_id = i
+                brightest_flux = comp.p[0]
+
+        brightest_x = comps[brightest_id].p[1]
+        brightest_y = comps[brightest_id].p[2]
+
         for comp in comps:
             if comp.size == 3:
                 axes.scatter(-comp.p[1], -comp.p[2], s=80, color="black", alpha=1, marker="x")
             elif comp.size == 4:
-                e = Circle((-comp.p[1], -comp.p[2]), comp.p[3],
+                e = Circle((-comp.p[1]+brightest_x, -comp.p[2]+brightest_y), comp.p[3],
                            edgecolor="black", facecolor="red",
                            alpha=0.05)
                 axes.add_patch(e)
@@ -272,6 +563,41 @@ def plot_position_posterior(samples, savefn=None, ra_lim=(-10, 10),
     if savefn is not None:
         fig.savefig(savefn, dpi=300, bbox_inches="tight")
     return fig
+
+
+def onclick(event):
+    """
+    Add ``fig.canvas.mpl_connect('button_press_event', onclick)`` before show.
+    """
+    print(event.xdata, event.ydata)
+
+
+def estimated_component_std(post_file, n_comp, ra_lim, dec_lim, jitter_first=True):
+    data = np.loadtxt(post_file)
+    ras = list()
+    decs = list()
+    fluxs = list()
+    j_x = 0
+    if jitter_first:
+        j_x += 1
+    j_y = 1
+    if jitter_first:
+        j_y += 1
+    j_flux = 2
+    if jitter_first:
+        j_flux += 1
+    for sample in data:
+        for i in range(n_comp):
+            ra = sample[i*4+j_x]
+            dec = sample[i*4 + j_y]
+            flux = sample[i*4 + j_flux]
+            print(ra, dec, flux)
+            if ra_lim[0] < ra < ra_lim[1] and dec_lim[0] < dec < dec_lim[1]:
+                ras.append(ra)
+                decs.append(dec)
+                fluxs.append(np.exp(flux))
+    print(fluxs)
+    return np.std(ras), np.std(decs), np.std(fluxs)
 
 
 def plot_flux_size_posterior_isoT(samples, freq_ghz=15.4, z=0, D=1, savefn=None):
@@ -394,6 +720,37 @@ def plot_tb_distance_posterior(samples, freq_ghz, z=0.0, savefn=None):
     lg_tb_max = np.ceil(np.log10(np.max([tbs[i] for i in range(n_comps)])))
     axes.set_ylim([10**lg_tb_min, 10**lg_tb_max])
     axes.set_xlabel("r [mas]")
+    axes.set_ylabel("Tb [K]")
+    axes.set_xscale('log')
+    axes.set_yscale('log')
+
+    if savefn is not None:
+        fig.savefig(savefn, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def plot_size_tb_posterior(samples, freq_ghz, z=0.0, savefn=None):
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    fig, axes = plt.subplots(1, 1)
+    tbs = dict()
+    sizes = dict()
+    n_comps = int(len(samples[0])/4)
+
+    for i_comp in range(n_comps):
+        sizes[i_comp] = np.exp(samples[:, 3+i_comp*4])
+        tbs[i_comp] = tb_comp(np.exp(samples[:, 2+i_comp*4]),
+                                          np.exp(samples[:, 3+i_comp*4]),
+                                          freq_ghz, z=z)
+
+    for i_comp, color in zip(range(n_comps), colors):
+        axes.scatter(sizes[i_comp], tbs[i_comp], s=0.6, color=color)
+
+    # Need manually set ylim because of matplotlib bug
+    lg_tb_min = np.floor((np.log10(np.min([tbs[i] for i in range(n_comps)]))))
+    lg_tb_max = np.ceil(np.log10(np.max([tbs[i] for i in range(n_comps)])))
+    axes.set_ylim([10**lg_tb_min, 10**lg_tb_max])
+    # axes.set_xlim([0.01, 1])
+    axes.set_xlabel("size [mas]")
     axes.set_ylabel("Tb [K]")
     axes.set_xscale('log')
     axes.set_yscale('log')
@@ -718,5 +1075,5 @@ if __name__ == "__main__":
 
 
 
-    fig = plot_several_epochs(post_files_dict, ra_lim=(-3, 9), dec_lim=(-3, 2))
+    # fig = plot_several_epochs(post_files_dict, ra_lim=(-3, 9), dec_lim=(-3, 2))
 
