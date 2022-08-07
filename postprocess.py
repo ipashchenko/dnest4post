@@ -2,7 +2,6 @@ import copy
 import numpy as np
 import numpy.random as rng
 from loadings import my_loadtxt, loadtxt_rows
-from matplotlib import pyplot as plt
 
 
 def logsumexp(values):
@@ -61,7 +60,6 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.axhline(-1., color='g')
         plt.axhline(-np.log(10.), color='g', linestyle="--")
         plt.ylim(top=0.05)
-        plt.savefig("Compression_level.png", bbox_inches="tight")
 
         plt.subplot(2, 1, 2)
         good = np.nonzero(levels_orig[:, 4] > 0)[0]
@@ -70,7 +68,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.ylim([0., 1.])
         plt.xlabel("Level")
         plt.ylabel("MH Acceptance")
-        plt.savefig("MHAcceptance_level.png", bbox_inches="tight")
+        plt.savefig("MHAcceptance_compression_level.png", bbox_inches="tight")
 
     # Convert to lists of tuples
     logl_levels = [(levels_orig[i, 1], levels_orig[i, 2]) for i in
@@ -181,7 +179,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
             plt.ylabel('Posterior Weights')
             plt.xlabel('log(X)')
             plt.xlim(xlim)
-            plt.savefig("logX_PostWeights.png", bbox_inches="tight")
+            plt.savefig("logX_logL_PostWeights.png", bbox_inches="tight")
 
     # Log prior weights
     logp_samples_averaged = np.empty(len(P_samples))
