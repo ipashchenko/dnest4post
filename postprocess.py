@@ -181,6 +181,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
             plt.ylabel('Posterior Weights')
             plt.xlabel('log(X)')
             plt.xlim(xlim)
+            plt.savefig("logX_PostWeights.png", bbox_inches="tight")
 
     # Log prior weights
     logp_samples_averaged = np.empty(len(P_samples))
