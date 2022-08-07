@@ -50,6 +50,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.plot(sample_info[:, 0], "k")
         plt.xlabel("Iteration")
         plt.ylabel("Level")
+        plt.savefig("Iteration_level.png", bbox_inches="tight")
 
         plt.figure(2)
         plt.subplot(2, 1, 1)
@@ -60,6 +61,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.axhline(-1., color='g')
         plt.axhline(-np.log(10.), color='g', linestyle="--")
         plt.ylim(top=0.05)
+        plt.savefig("Compression_level.png", bbox_inches="tight")
 
         plt.subplot(2, 1, 2)
         good = np.nonzero(levels_orig[:, 4] > 0)[0]
@@ -68,6 +70,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.ylim([0., 1.])
         plt.xlabel("Level")
         plt.ylabel("MH Acceptance")
+        plt.savefig("MHAcceptance_level.png", bbox_inches="tight")
 
     # Convert to lists of tuples
     logl_levels = [(levels_orig[i, 1], levels_orig[i, 2]) for i in
