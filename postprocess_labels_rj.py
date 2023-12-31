@@ -2,10 +2,10 @@ import numpy as np
 # This postprocess samples of RJ
 
 
-def get_samples_for_each_n(samples, jitter_first=True, n_max=30):
+def get_samples_for_each_n(samples, jitter_first=True, n_jitters=1, n_max=30):
     j = 0
     if jitter_first:
-        j += 1
+        j += n_jitters
     # dim, max num components, 4 hyperparameters + num components
     j += 7
     n_components = samples[:, j-1]

@@ -2,7 +2,8 @@ import copy
 import numpy as np
 import numpy.random as rng
 from loadings import my_loadtxt, loadtxt_rows
-
+import matplotlib
+matplotlib.use("TkAgg")
 
 def logsumexp(values):
     biggest = np.max(values)

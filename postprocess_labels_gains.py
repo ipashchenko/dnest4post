@@ -3,59 +3,132 @@ import matplotlib.pyplot as plt
 # This postprocess samples of fixed number of components + gains
 
 
-def get_r(sample, comp_length, n_comp, jitter_first=True):
+# This getters are applicable to already de-RJ samples, i.e. those that were
+# obtained by rj.get_samples_for_each_n
+def get_r(sample, comp_length, n_comp, jitter_first=True, n_jitters=1):
     j = 0
     if jitter_first:
-        j += 1
+        j += n_jitters
     return [np.hypot(sample[i*comp_length+j], sample[i*comp_length+j+1]) for i in
             range(n_comp)]
 
 
-def get_F(sample, comp_length, n_comp, jitter_first=True):
+def get_x(sample, comp_length, n_comp, jitter_first=True, n_jitters=1):
+    j = 0
+    if jitter_first:
+        j += n_jitters
+    return [sample[i*comp_length+j] for i in range(n_comp)]
+
+
+def get_y(sample, comp_length, n_comp, jitter_first=True, n_jitters=1):
+    j = 1
+    if jitter_first:
+        j += n_jitters
+    return [sample[i*comp_length+j] for i in range(n_comp)]
+
+
+def get_F(sample, comp_length, n_comp, jitter_first=True, n_jitters=1):
     j = 2
     if jitter_first:
-        j += 1
+        j += n_jitters
     return [(sample[i*comp_length+j]) for i in range(n_comp)]
 
 
-def sort_sample_by_r(sample, n_comp, comp_length=4, jitter_first=True):
-    r = get_r(sample, comp_length, n_comp, jitter_first)
+def sort_sample_by_r(sample, n_comp, comp_length=4, jitter_first=True,
+                     n_jitters=1):
+    r = get_r(sample, comp_length, n_comp, jitter_first, n_jitters)
     indices = np.argsort(r)
     # Construct re-labelled sample
     j = 0
     if jitter_first:
-        j += 1
-    return np.hstack([sample[j+i*comp_length: j+(i+1)*comp_length] for i in
-                      indices])
+        j += n_jitters
+    else:
+        n_jitters = 0
+    result = np.hstack([sample[j+i*comp_length: j+(i+1)*comp_length] for i in
+                        indices])
+    return np.hstack((sample[: n_jitters], result))
 
 
-def sort_sample_by_F(sample, n_comp, comp_length=4, jitter_first=True):
-    F = get_F(sample, comp_length, n_comp, jitter_first)
+def sort_sample_by_F(sample, n_comp, comp_length=4, jitter_first=True,
+                     n_jitters=1):
+    F = get_F(sample, comp_length, n_comp, jitter_first, n_jitters)
     indices = np.argsort(F)[::-1]
     # Construct re-labelled sample
     j = 0
     if jitter_first:
-        j += 1
+        j += n_jitters
     return np.hstack([sample[j+i*comp_length: j+(i+1)*comp_length] for i in
                       indices])
 
 
-def sort_samples_by_r(samples, n_comp, comp_length=4, jitter_first=True):
+def sort_sample_by_DEC(sample, n_comp, comp_length=4, jitter_first=True, n_jitters=1, inverse=False):
+    dec = get_x(sample, comp_length, n_comp, jitter_first, n_jitters)
+    indices = np.argsort(dec)
+    if inverse:
+        indices = indices[::-1]
+    # Construct re-labelled sample
+    j = 0
+    if jitter_first:
+        j += n_jitters
+    return np.hstack([sample[j+i*comp_length: j+(i+1)*comp_length] for i in
+                      indices])
+
+
+def sort_sample_by_RA(sample, n_comp, comp_length=4, jitter_first=True, n_jitters=1, inverse=False):
+    dec = get_y(sample, comp_length, n_comp, jitter_first, n_jitters)
+    indices = np.argsort(dec)
+    if inverse:
+        indices = indices[::-1]
+    # Construct re-labelled sample
+    j = 0
+    if jitter_first:
+        j += n_jitters
+    return np.hstack([sample[j+i*comp_length: j+(i+1)*comp_length] for i in
+                      indices])
+
+def sort_samples_by_r(samples, n_comp, comp_length=4, jitter_first=True,
+                      n_jitters=1):
     new_samples = list()
     for sample in samples:
-        sorted_sample = sort_sample_by_r(sample, n_comp, comp_length, jitter_first)
+        sorted_sample = sort_sample_by_r(sample, n_comp, comp_length, jitter_first,
+                                         n_jitters)
+        new_samples.append(sorted_sample)
+    return np.atleast_2d(new_samples)
+
+
+def sort_samples_by_F(samples, n_comp, comp_length=4, jitter_first=True, n_jitters=1):
+    new_samples = list()
+    for sample in samples:
+        sorted_sample = sort_sample_by_F(sample, n_comp, comp_length, jitter_first, n_jitters)
         if jitter_first:
             sorted_sample = np.append(sorted_sample[::-1], sample[0])[::-1]
         new_samples.append(sorted_sample)
     return np.atleast_2d(new_samples)
 
 
-def sort_samples_by_F(samples, n_comp, comp_length=4, jitter_first=True):
+
+def sort_samples_by_DEC(samples, n_comp, comp_length=4, jitter_first=True, n_jitters=1, inverse=False):
+    """
+    Sort each sample by DEC.
+    """
     new_samples = list()
     for sample in samples:
-        sorted_sample = sort_sample_by_F(sample, n_comp, comp_length, jitter_first)
+        sorted_sample = sort_sample_by_DEC(sample, n_comp, comp_length, jitter_first, n_jitters, inverse)
         if jitter_first:
-            sorted_sample = np.append(sorted_sample[::-1], sample[0])[::-1]
+            sorted_sample = np.append(sorted_sample[::-n_jitters], sample[0])[::-1]
+        new_samples.append(sorted_sample)
+    return np.atleast_2d(new_samples)
+
+
+def sort_samples_by_RA(samples, n_comp, comp_length=4, jitter_first=True, n_jitters=1, inverse=False):
+    """
+    Sort each sample by RA.
+    """
+    new_samples = list()
+    for sample in samples:
+        sorted_sample = sort_sample_by_RA(sample, n_comp, comp_length, jitter_first, n_jitters, inverse)
+        if jitter_first:
+            sorted_sample = np.append(sorted_sample[::-n_jitters], sample[0])[::-1]
         new_samples.append(sorted_sample)
     return np.atleast_2d(new_samples)
 
@@ -77,7 +150,7 @@ def scans(times):
 
 
 def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp=1, plotfn=None,
-                          with_mean_phase=True, add_mean_phase=False):
+                          with_mean_phase=True, with_mean_amplitude=False, add_mean_phase=False):
     """
     :param posterior_sample:
         DNest file with posterior.
@@ -109,25 +182,29 @@ def process_sampled_gains(posterior_sample, df_fitted, jitter_first=True, n_comp
         gains_post[ant] = dict()
         gains_post[ant]["amp"] = dict()
         gains_post[ant]["phase"] = dict()
+        h = 0
+        k = 0
         if with_mean_phase:
             gains_post[ant]["mean_phase"] = dict()
             gains_post[ant]["mean_phase"] = samples[:, j+gains_len[ant]["amp"]]
-            h = 1
-        else:
-            h = 0
+            h += 1
+        if with_mean_amplitude:
+            gains_post[ant]["mean_amp"] = dict()
+            gains_post[ant]["mean_amp"] = samples[:, j]
+            k += 1
         for i, t in enumerate(df_fitted.query("ant1 == @ant or ant2 == @ant").times_amp.unique()):
-            gains_post[ant]["amp"][t] = samples[:, j+i]
+            gains_post[ant]["amp"][t] = samples[:, j+i+k]
             # +1 mean skip ``mean_phase``
             if with_mean_phase:
                 if add_mean_phase:
-                    gains_post[ant]["phase"][t] = samples[:, j+gains_len[ant]["amp"]+i+1] + gains_post[ant]["mean_phase"]
+                    gains_post[ant]["phase"][t] = samples[:, j+gains_len[ant]["amp"]+i+1+k] + gains_post[ant]["mean_phase"]
                 else:
-                    gains_post[ant]["phase"][t] = samples[:, j+gains_len[ant]["amp"]+i+1]
+                    gains_post[ant]["phase"][t] = samples[:, j+gains_len[ant]["amp"]+i+1+k]
             else:
-                gains_post[ant]["phase"][t] = samples[:, j+gains_len[ant]["amp"]+i]
+                gains_post[ant]["phase"][t] = samples[:, j+gains_len[ant]["amp"]+i+k]
 
 
-        j += gains_len[ant]["amp"] + gains_len[ant]["phase"] + h
+        j += gains_len[ant]["amp"] + gains_len[ant]["phase"] + h + k
 
     # Find scans
     times = list()
@@ -246,6 +323,7 @@ def process_sampled_gains_many_IFs(posterior_sample, df_fitted, plot_IF=0, jitte
             gains_post[ant][IF]["amp"] = dict()
             gains_post[ant][IF]["phase"] = dict()
             if with_mean_phase:
+                print("Mean phase")
                 gains_post[ant][IF]["mean_phase"] = samples[:, j+gains_len[ant][IF]["amp"]]
                 h = 1
             else:
