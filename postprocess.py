@@ -26,7 +26,14 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
                 single_precision=False, rng_seed=None,
                 sample_file="sample.txt", level_file="levels.txt",
                 sample_info_file="sample_info.txt",
-                post_sample_file="posterior_sample.txt"):
+                post_sample_file="posterior_sample.txt",
+                pics_prefix=None, show_pics=True):
+
+    if pics_prefix is None:
+        pics_prefix = ""
+    else:
+        pics_prefix = f"{pics_prefix}_"
+
     if rng_seed is not None:
         rng.seed(rng_seed)
 
@@ -50,7 +57,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.plot(sample_info[:, 0], "k")
         plt.xlabel("Iteration")
         plt.ylabel("Level")
-        plt.savefig("Iteration_level.png", bbox_inches="tight")
+        plt.savefig(f"{pics_prefix}Iteration_level.png", bbox_inches="tight")
 
         plt.figure(2)
         plt.subplot(2, 1, 1)
@@ -69,7 +76,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         plt.ylim([0., 1.])
         plt.xlabel("Level")
         plt.ylabel("MH Acceptance")
-        plt.savefig("MHAcceptance_compression_level.png", bbox_inches="tight")
+        plt.savefig(f"{pics_prefix}MHAcceptance_compression_level.png", bbox_inches="tight")
 
     # Convert to lists of tuples
     logl_levels = [(levels_orig[i, 1], levels_orig[i, 2]) for i in
@@ -180,7 +187,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
             plt.ylabel('Posterior Weights')
             plt.xlabel('log(X)')
             plt.xlim(xlim)
-            plt.savefig("logX_logL_PostWeights.png", bbox_inches="tight")
+            plt.savefig(f"{pics_prefix}logX_logL_PostWeights.png", bbox_inches="tight")
 
     # Log prior weights
     logp_samples_averaged = np.empty(len(P_samples))
@@ -246,7 +253,7 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
         else:
             np.savetxt(post_sample_file, posterior_sample, header=header)
 
-    if plot:
+    if show_pics:
         plt.show()
 
     return [logz_estimate, H_estimate, logx_samples]
