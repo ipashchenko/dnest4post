@@ -4,6 +4,8 @@ import numpy.random as rng
 from loadings import my_loadtxt, loadtxt_rows
 import matplotlib
 matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+
 
 def logsumexp(values):
     biggest = np.max(values)
@@ -52,7 +54,6 @@ def postprocess(temperature=1., numResampleLogX=1, plot=True, loaded=(), cut=0.,
     sample_info = sample_info[cut:, :]
 
     if plot:
-        import matplotlib.pyplot as plt
         plt.figure(1)
         plt.plot(sample_info[:, 0], "k")
         plt.xlabel("Iteration")
